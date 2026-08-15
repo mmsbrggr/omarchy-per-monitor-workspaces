@@ -46,7 +46,7 @@ omarchy plugin add https://github.com/mmsbrggr/omarchy-per-monitor-workspaces.gi
 It drops into the exact bar position Omarchy's built-in workspace widget was
 using, and hands that spot back if you ever disable it.
 
-**2. The keybindings**
+**2. The Hyprland side**
 
 Append one line to `~/.config/hypr/bindings.lua`:
 
@@ -56,25 +56,31 @@ pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mmsbrggr.
 
 Save, and Hyprland reloads on its own. That's it.
 
+This half is not just the shortcuts. It is what gives each screen a set of
+workspaces of its own — it creates them, keeps them on the right screen when you
+dock, and points `SUPER+N` at them. Without it the widget only draws dots.
+
 > **Why the manual step?** Omarchy's plugin installer deliberately never runs
-> code from a plugin — it only clones files — so the keybinding half cannot
-> install itself. Better that than an installer that executes whatever it just
+> code from a plugin — it only clones files — so this half cannot install
+> itself. Better that than an installer that executes whatever it just
 > downloaded.
 
-If you skip step 2, the widget tells you rather than leaving you guessing:
+If you skip step 2, the widget says so rather than leaving you guessing — and
+offers to do it for you:
 
 ![The bar showing a warning triangle before the workspace numbers](docs/warning.png)
 
-Hover it for the fix. Until the bindings are loaded the bar draws per-monitor
-slots while `SUPER+N` still switches global workspaces — which looks like a
-broken widget if nothing points it out.
+Click it and it shows the exact line and the exact file, then either appends it
+for you or copies it so you can place it yourself. Nothing is written until you
+choose, the write only appends, and the previous file is kept as
+`bindings.lua.bak`. Hyprland reloads on save, so the warning clears itself.
 
 <details>
 <summary>Why <code>pcall</code> and <code>dofile</code>?</summary>
 
 `dofile` rather than `require`, because plugin directories are named
 `<author>.<name>` and the dot breaks Lua's module paths. Wrapped in `pcall` so
-that removing the plugin later costs you the per-monitor bindings rather than
+that removing the plugin later costs you per-monitor workspaces rather than
 everything after that line in your config.
 </details>
 

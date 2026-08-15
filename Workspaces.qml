@@ -180,6 +180,86 @@ BarWidget {
 
   readonly property var entries: root.buildEntries()
 
+  // ------------------------------------------------------------- bindings
+  //
+  // The Hyprland half cannot install itself -- Omarchy's plugin installer
+  // deliberately runs no code from a plugin -- so the warning offers to add the
+  // line instead, on a click. The click is the consent: the popup shows the
+  // exact text and the exact file before anything is written, and the write
+  // only ever appends.
+  readonly property string bindingsPath: {
+    var home = Quickshell.env("HOME")
+    return home ? home + "/.config/hypr/bindings.lua" : ""
+  }
+  readonly property string pluginDir: {
+    var home = Quickshell.env("HOME")
+    return home ? home + "/.config/omarchy/plugins/" + root.moduleName : ""
+  }
+  readonly property string bindingsLine:
+    'pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/' + root.moduleName + '/hypr/init.lua")'
+
+  property string bindingsText: ""
+  property string installError: ""
+
+  // Present already? Match on the plugin directory rather than the whole line,
+  // so a hand-placed variant (plain dofile, different quoting) still counts.
+  readonly property bool bindingsLinePresent:
+    root.bindingsText !== "" && root.bindingsText.indexOf(root.moduleName + "/hypr/init.lua") !== -1
+
+  FileView {
+    id: bindingsFile
+    path: root.bindingsPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.bindingsText = text()
+    onLoadFailed: root.bindingsText = ""
+    onFileChanged: reload()
+  }
+
+  // Keeps the previous contents next to the original before appending, so a
+  // bad outcome is one `mv` away from undone.
+  FileView {
+    id: bindingsBackup
+    path: root.bindingsPath + ".bak"
+    atomicWrites: true
+    printErrors: false
+  }
+
+  function installBindings() {
+    root.installError = ""
+
+    if (root.bindingsPath === "") { root.installError = "Cannot resolve $HOME."; return }
+    if (root.bindingsText === "") {
+      // Either it has not been read yet, or it genuinely cannot be. Ask for a
+      // reload and say so, rather than sending someone off to edit by hand.
+      bindingsFile.reload()
+      root.installError = "Still reading " + root.bindingsPath + " — try again."
+      return
+    }
+    if (root.bindingsLinePresent) { root.installError = "The line is already there."; return }
+
+    bindingsBackup.setText(root.bindingsText)
+
+    var body = root.bindingsText
+    if (body.charAt(body.length - 1) !== "\n") body += "\n"
+    bindingsFile.setText(body
+      + "\n-- Per-monitor workspaces: SUPER+N acts on the focused monitor.\n"
+      + "-- Added by the Per-monitor Workspaces bar widget. pcall so that removing\n"
+      + "-- the plugin costs these bindings rather than everything below this line.\n"
+      + root.bindingsLine + "\n")
+
+    root.warningOpen = false
+  }
+
+  function copyBindingsLine() {
+    if (!root.bar) return
+    root.bar.run("printf %s " + Util.shellQuote(root.bindingsLine) + " | wl-copy")
+    root.warningOpen = false
+  }
+
+  property bool warningOpen: false
+
   // ---------------------------------------------------------------- actions
 
   // Hyprland's dispatch evaluates Lua source, so an action that has to happen
@@ -269,18 +349,19 @@ BarWidget {
     // Not a workspace, so not in the ring — a sibling the layout skips while
     // the keybindings are in place.
     WidgetButton {
+      id: warningButton
       visible: !root.luaLoaded
       bar: root.bar
       text: root.warningGlyph
       active: true
-      pressable: false
-      tooltipText: "Per-monitor Workspaces: keybindings not loaded. Add the plugin's "
-        + "hypr/init.lua line to ~/.config/hypr/bindings.lua — until then SUPER+N "
-        + "still switches global workspaces."
+      tooltipText: "Per-monitor workspaces are not active — click to fix"
       horizontalMargin: 6
       verticalPadding: 6
       fixedWidth: root.vertical ? root.barSize : Style.space(20)
       fixedHeight: root.barSize
+      onPressed: function(button) {
+        if (button === Qt.LeftButton) root.warningOpen = !root.warningOpen
+      }
     }
 
     Repeater {
@@ -312,6 +393,96 @@ BarWidget {
           else if (button === Qt.LeftButton) root.focusWorkspace(modelData.name)
         }
         onWheelMoved: function(delta) { root.onWheel(delta) }
+      }
+    }
+  }
+
+  PopupCard {
+    id: warningPopup
+    anchorItem: warningButton
+    bar: root.bar
+    owner: root
+    open: root.warningOpen && !root.luaLoaded
+    contentWidth: warningPopup.fittedContentWidth(Style.space(380))
+    contentHeight: warningPopup.fittedContentHeight(warningColumn.implicitHeight)
+
+    Column {
+      id: warningColumn
+      anchors.fill: parent
+      spacing: Style.space(8)
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        color: root.bar ? root.bar.foreground : Color.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        text: "This bar is drawing per-monitor workspaces, but the half that "
+          + "makes them work is not loaded. That file is what gives each screen a "
+          + "set of its own — it creates the workspaces, keeps them on the right "
+          + "screen when you dock, and points SUPER+N at them. Until it runs, "
+          + "these dots are just dots and SUPER+N still switches Omarchy's global "
+          + "workspaces."
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        color: root.bar ? root.bar.foreground : Color.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        opacity: 0.7
+        text: "Appends to " + root.bindingsPath + ":"
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WrapAnywhere
+        color: root.bar ? root.bar.foreground : Color.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        text: root.bindingsLine
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        visible: root.installError !== ""
+        color: root.bar ? root.bar.urgent : Color.urgent
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        text: root.installError
+      }
+
+      Row {
+        spacing: Style.space(8)
+
+        Button {
+          text: "Add it for me"
+          bordered: true
+          foreground: root.bar ? root.bar.foreground : Color.foreground
+          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          onClicked: root.installBindings()
+        }
+
+        Button {
+          text: "Copy the line"
+          bordered: true
+          foreground: root.bar ? root.bar.foreground : Color.foreground
+          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          onClicked: root.copyBindingsLine()
+        }
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        color: root.bar ? root.bar.foreground : Color.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        opacity: 0.7
+        text: "Hyprland reloads on save, and this warning disappears on its own. "
+          + "The previous file is kept as bindings.lua.bak."
       }
     }
   }
