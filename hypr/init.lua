@@ -288,6 +288,57 @@ o.bind("SUPER + mouse_up", "Scroll active workspace backward", cycle(-1))
 hl.unbind("SUPER + CTRL + TAB")
 o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "previous_per_monitor" }))
 
+-- A screen that appears lands on whatever workspace Hyprland hands it, which
+-- is a global numbered one rather than anything in this screen's set. Undock
+-- and redock and every external comes back sitting on a throwaway workspace
+-- outside its own slots. Put each new screen on one of its own instead.
+--
+-- Prefer a slot that already exists: while the screen was away its workspaces
+-- were parked on a surviving one, so focusing a parked slot here is also what
+-- brings it home, windows and all.
+local function home_slot(monitor)
+  local key = monitor_key(monitor)
+
+  local existing = {}
+  for _, workspace in ipairs(hl.get_workspaces()) do
+    existing[workspace.name] = true
+  end
+
+  for slot = 1, COUNT do
+    local name = key .. ":" .. slot
+    if existing[name] then return name end
+  end
+
+  return key .. ":1"
+end
+
+local function adopt_monitor(monitor)
+  local name = home_slot(monitor)
+  local active = monitor.active_workspace
+  if active and active.name == name then return end
+
+  -- Hyprland creates a missing workspace on whichever monitor is focused, and
+  -- set_workspace cannot conjure one, so the slot has to be focused into
+  -- existence on the new screen and the focus handed straight back.
+  local origin = hl.get_active_monitor()
+  hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
+  hl.dispatch(hl.dsp.focus({ workspace = "name:" .. name }))
+  if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end
+end
+
+hl.on("monitor.added", function(monitor)
+  if not monitor then return end
+
+  -- Let Hyprland finish attaching the output before retargeting it; a dock
+  -- brings several up at once. Re-resolve by name rather than holding the
+  -- monitor across the wait, in case it goes away again first.
+  local name = monitor.name
+  hl.timer(function()
+    local current = hl.get_monitor(name)
+    if current then adopt_monitor(current) end
+  end, { timeout = 250, type = "oneshot" })
+end)
+
 -- Tell the bar widget that this file is loaded, and how many slots it bound.
 -- The widget reads the count from here rather than carrying its own, so the
 -- two halves cannot drift; and its absence is how the widget knows to warn.

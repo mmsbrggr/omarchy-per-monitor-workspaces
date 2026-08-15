@@ -165,8 +165,13 @@ display glyph:
 ![The bar showing workspaces 1 to 5 followed by an orange display icon](docs/parked.png)
 
 Hover one to see which screen and slot it came from. `SUPER + TAB` reaches them
-too, so nothing you had open is stranded. Plug the screen back in and Hyprland
-takes them with it — the extra dots disappear on their own.
+too, so nothing you had open is stranded.
+
+Plug the screen back in and its workspaces come home with their windows, and it
+lands on the slot it was showing before rather than on some workspace outside
+its own set. Left to itself, Hyprland hands a returning screen a fresh global
+numbered workspace, so after every dock you would be sitting on a throwaway one
+— the plugin puts each screen back on a slot of its own instead.
 
 They deliberately are *not* labelled with a number: the slot number they carry
 belongs to the screen they came from, so a parked "4" sitting after this
