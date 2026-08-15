@@ -140,15 +140,24 @@ local function target_monitor(selector)
   return monitor, active
 end
 
--- Both sides of a cross-monitor action: what this screen is showing and what
--- the target screen is showing.
+-- Both sides of a cross-monitor action: the screen we are on and the one we
+-- are aiming at, plus what each is showing.
 local function active_workspaces(selector)
-  local monitor, active = target_monitor(selector)
+  local monitor, origin = target_monitor(selector)
   if not monitor then return nil end
 
-  local from, to = active.active_workspace, monitor.active_workspace
+  local from, to = origin.active_workspace, monitor.active_workspace
   if not from or not to then return nil end
-  return monitor, from, to
+  return monitor, origin, from, to
+end
+
+-- Moving a window does not take keyboard focus with it, and focusing a monitor
+-- does nothing while Hyprland already believes that monitor is focused. So
+-- after shuffling windows around, the only way to land somewhere defined is to
+-- name the window. Without this you end up typing into a screen you are not
+-- looking at.
+local function focus_window(address)
+  hl.dispatch(hl.dsp.focus({ window = "address:" .. address }))
 end
 
 local function focus_monitor(selector)
@@ -194,24 +203,45 @@ end
 
 local function send_workspace(selector)
   return function()
-    local monitor, from, to = active_workspaces(selector)
+    local monitor, _, from, to = active_workspaces(selector)
     if not monitor then return end
 
-    move_all(window_addresses(from), to)
-    hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
+    local active = hl.get_active_window()
+    local moving = window_addresses(from)
+    move_all(moving, to)
+
+    -- Follow what you sent, and land on the window you were already using
+    -- rather than on whatever happened to be sitting on that screen.
+    if #moving == 0 then
+      hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
+      return
+    end
+
+    local landed = moving[1]
+    for _, address in ipairs(moving) do
+      if active and address == active.address then landed = address break end
+    end
+    focus_window(landed)
   end
 end
 
 local function swap_workspaces(selector)
   return function()
-    local _, from, to = active_workspaces(selector)
-    if not from then return end
+    local _, origin, from, to = active_workspaces(selector)
+    if not origin then return end
 
     -- Snapshot both sides before moving anything: the first move mutates the
     -- lists the second would otherwise be reading.
     local outgoing, incoming = window_addresses(from), window_addresses(to)
     move_all(outgoing, to)
     move_all(incoming, from)
+
+    -- Stay on the screen you are looking at, on whatever just arrived there.
+    if #incoming > 0 then
+      focus_window(incoming[1])
+    else
+      hl.dispatch(hl.dsp.focus({ monitor = origin.name }))
+    end
   end
 end
 

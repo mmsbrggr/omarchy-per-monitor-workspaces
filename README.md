@@ -111,6 +111,10 @@ These move **windows, not workspaces**: every workspace stays on the screen it
 belongs to, and what travels is what is on it. Windows land on whatever the
 target screen is currently showing.
 
+Focus lands where you would expect it to. Sending follows what you sent, so you
+end up on your own window rather than on whatever was already over there.
+Swapping keeps you on the screen you are looking at, on whatever just arrived.
+
 ### With the mouse
 
 On the workspace dots: **left-click** to focus, **right-click** to send the
