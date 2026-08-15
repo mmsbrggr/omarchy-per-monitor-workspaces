@@ -34,11 +34,50 @@ BarWidget {
   // Stamped with the Hyprland instance that wrote it, so a file left behind by
   // an earlier login cannot pass for this session. When either side cannot say
   // which instance it is, take the file at its word rather than cry wolf.
+  //
+  // The instance alone is not enough. Comment the line out of bindings.lua and
+  // reload, and Hyprland drops everything the file bound while the file it
+  // wrote stays on disk, stamped with this very session -- so the bar would
+  // keep claiming all is well. Every reload is therefore treated as a question:
+  // the state file has to be rewritten to answer it, and `staleSinceReload`
+  // stands in for "the reload came and went without an answer".
+  property bool staleSinceReload: false
+
   readonly property bool luaLoaded: {
-    if (!root.luaState) return false
+    if (!root.luaState || root.staleSinceReload) return false
     var stamped = String(root.luaState.instance || "")
     if (stamped === "" || root.hyprlandInstance === "") return true
     return stamped === root.hyprlandInstance
+  }
+
+  property real reloadAt: 0
+
+  // A file with no stamp at all is one an older version of the plugin wrote, so
+  // it answers nothing. Zero rather than NaN, because every comparison against
+  // NaN is false and a missing answer would silently read as a fresh one.
+  function stateLoadedAt() {
+    var stamp = root.luaState ? Number(root.luaState.loaded) : Number.NaN
+    return isFinite(stamp) ? stamp : 0
+  }
+
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (event.name !== "configreloaded") return
+      // Whole seconds: the Lua side stamps with os.time(), so a fractional
+      // reading here would make a file written in the same second look older
+      // than the reload that prompted it.
+      root.reloadAt = Math.floor(Date.now() / 1000)
+      reloadGrace.restart()
+    }
+  }
+
+  // Long enough for the config to finish and rewrite the file; short enough
+  // that a bar left claiming per-monitor workspaces corrects itself promptly.
+  Timer {
+    id: reloadGrace
+    interval: 2500
+    onTriggered: root.staleSinceReload = root.stateLoadedAt() < root.reloadAt
   }
 
   function parseState(raw) {
@@ -55,7 +94,11 @@ BarWidget {
     path: root.statePath
     watchChanges: true
     printErrors: false
-    onLoaded: root.luaState = root.parseState(text())
+    onLoaded: {
+      root.luaState = root.parseState(text())
+      // A rewrite at or after the reload is the answer that reload asked for.
+      if (root.stateLoadedAt() >= root.reloadAt) root.staleSinceReload = false
+    }
     onLoadFailed: root.luaState = null
     onFileChanged: reload()
   }

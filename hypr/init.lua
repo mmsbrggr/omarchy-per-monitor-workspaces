@@ -407,7 +407,11 @@ local function write_state()
   if not file then return end
 
   local instance = (os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""):gsub('[\\"]', "\\%0")
-  file:write(string.format('{"count":%d,"instance":"%s"}\n', COUNT, instance))
+  -- `loaded` changes every time this file runs, which is how the widget tells
+  -- "still loaded" from "was loaded earlier this session". The instance stamp
+  -- only rules out a file left by a previous login; it cannot notice the line
+  -- being commented out and Hyprland reloaded without it.
+  file:write(string.format('{"count":%d,"instance":"%s","loaded":%d}\n', COUNT, instance, os.time()))
   file:close()
 end
 
