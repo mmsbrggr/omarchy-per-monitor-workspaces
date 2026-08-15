@@ -46,7 +46,7 @@ omarchy plugin add https://github.com/mmsbrggr/omarchy-per-monitor-workspaces.gi
 It drops into the exact bar position Omarchy's built-in workspace widget was
 using, and hands that spot back if you ever disable it.
 
-**2. The Hyprland side**
+**2. The keyboard shortcuts** *(optional, strongly recommended)*
 
 Append one line to `~/.config/hypr/bindings.lua`:
 
@@ -56,24 +56,26 @@ pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mmsbrggr.
 
 Save, and Hyprland reloads on its own. That's it.
 
-This half is not just the shortcuts. It is what gives each screen a set of
-workspaces of its own — it creates them, keeps them on the right screen when you
-dock, and points `SUPER+N` at them. Without it the widget only draws dots.
+The widget alone already gives you per-monitor workspaces: the dots are real,
+you can click them, and they sort themselves out when you dock. This line adds
+the keyboard to that — `SUPER+1..N` for the screen you are looking at, cycling,
+and moving windows between screens. Without it `SUPER+N` keeps switching
+Omarchy's global workspaces, which is not what the dots show.
 
 > **Why the manual step?** Omarchy's plugin installer deliberately never runs
-> code from a plugin — it only clones files — so this half cannot install
-> itself. Better that than an installer that executes whatever it just
-> downloaded.
+> code from a plugin — it only clones files — so a plugin cannot add keybindings
+> to your config on its own. Better that than an installer that executes
+> whatever it just downloaded.
 
-If you skip step 2, the widget says so rather than leaving you guessing — and
-offers to do it for you:
+You do not have to do it by hand. The first time the widget runs without the
+line, it offers:
 
 ![The bar showing a warning triangle before the workspace numbers](docs/warning.png)
 
-Click it and it shows the exact line and the exact file, then either appends it
-for you or copies it so you can place it yourself. Nothing is written until you
-choose, the write only appends, and the previous file is kept as
-`bindings.lua.bak`. Hyprland reloads on save, so the warning clears itself.
+**Add it for me** appends the line, **Copy the line** hands it to you to place
+yourself, **Not now** declines and is never asked again. Nothing is written
+until you choose, the write only appends, and the previous file is kept as
+`bindings.lua.bak`.
 
 <details>
 <summary>Why <code>pcall</code> and <code>dofile</code>?</summary>
@@ -146,30 +148,17 @@ bar panels on `SUPER + CTRL + 1..9`, and `CTRL + ALT + TAB` for cycling monitors
 
 ## Configuration
 
-Five slots per screen by default. To change it, set the count once, above the
-`pcall(dofile, ...)` line in `~/.config/hypr/bindings.lua`:
-
-```lua
-per_monitor_workspaces_count = 8
-```
-
-The bar picks that up on its own — the keybindings publish the number they
-bound, so the keys and the dots cannot drift apart.
-
-<details>
-<summary>Running the widget without the keybindings</summary>
-
-Then nothing is publishing a count, and the widget falls back to its own
-setting:
+Five slots per screen by default. It is a widget setting, so it lives in one
+place:
 
 ```sh
 omarchy bar set io.github.mmsbrggr.per-monitor-workspaces count 8 --json
 ```
 
-`--json` matters — without it the value is stored as a string. Omarchy 4 has no
-settings UI for plugin widgets yet, so that or editing the `count` key on the
-widget's `shell.json` entry are the way in.
-</details>
+(`--json` matters — without it the value is stored as a string.) The widget
+writes the number to `~/.config/omarchy/per-monitor-workspaces.conf`, and the
+shortcuts read it from there, so the keys and the dots cannot drift apart.
+Hyprland picks up the new count on its next reload.
 
 ## Good to know
 
@@ -189,8 +178,9 @@ screen they belong to. Left to itself Hyprland hands a returning screen a fresh
 global numbered workspace, and a dock can also put the same panel on a
 different connector than last time — which makes two screens show each other's
 workspaces, since Hyprland restores them per connector. Either way you would be
-sitting on something outside that screen's own set after every dock. The plugin
-sorts both out.
+sitting on something outside that screen's own set after every dock. The widget
+sorts both out — it rides Hyprland's IPC socket, which announces a returning
+screen reliably, and each bar minds its own screen.
 
 A screen is only ever moved when it is showing something outside its own set,
 so this never takes you off one of its own slots. It can take you off a parked

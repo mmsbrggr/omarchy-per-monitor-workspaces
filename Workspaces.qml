@@ -15,115 +15,55 @@ BarWidget {
   id: root
   moduleName: "io.github.mmsbrggr.per-monitor-workspaces"
 
-  readonly property string warningGlyph: "\uF071"
   readonly property string parkedGlyph: "\uF108"
   readonly property string focusedGlyph: "\uDB85\uDCFB"
 
-  // ------------------------------------------------------------------ state
+  // -------------------------------------------------------------- settings
   //
-  // hypr/init.lua writes this when it loads, with the slot count it bound. The
-  // widget follows that count rather than keeping its own, so the two halves
-  // cannot drift; the `count` setting below is only the fallback for a bar
-  // whose keybindings were never installed.
-  readonly property string stateDir: Quickshell.env("XDG_RUNTIME_DIR") || ""
-  readonly property string statePath: stateDir ? stateDir + "/omarchy-per-monitor-workspaces.json" : ""
-  readonly property string hyprlandInstance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
-
-  property var luaState: null
-
-  // Stamped with the Hyprland instance that wrote it, so a file left behind by
-  // an earlier login cannot pass for this session. When either side cannot say
-  // which instance it is, take the file at its word rather than cry wolf.
+  // The count is this widget's own setting, and this widget is the source of
+  // truth for it. hypr/init.lua reads it back out of a small file so the keys
+  // and the dots cannot disagree.
   //
-  // The instance alone is not enough. Comment the line out of bindings.lua and
-  // reload, and Hyprland drops everything the file bound while the file it
-  // wrote stays on disk, stamped with this very session -- so the bar would
-  // keep claiming all is well. Every reload is therefore treated as a question:
-  // the state file has to be rewritten to answer it, and `staleSinceReload`
-  // stands in for "the reload came and went without an answer".
-  property bool staleSinceReload: false
-
-  readonly property bool luaLoaded: {
-    if (!root.luaState || root.staleSinceReload) return false
-    var stamped = String(root.luaState.instance || "")
-    if (stamped === "" || root.hyprlandInstance === "") return true
-    return stamped === root.hyprlandInstance
-  }
-
-  property real reloadAt: 0
-
-  // A file with no stamp at all is one an older version of the plugin wrote, so
-  // it answers nothing. Zero rather than NaN, because every comparison against
-  // NaN is false and a missing answer would silently read as a fresh one.
-  function stateLoadedAt() {
-    var stamp = root.luaState ? Number(root.luaState.loaded) : Number.NaN
-    return isFinite(stamp) ? stamp : 0
-  }
-
-  Connections {
-    target: Hyprland
-    function onRawEvent(event) {
-      if (event.name !== "configreloaded") return
-      // Whole seconds: the Lua side stamps with os.time(), so a fractional
-      // reading here would make a file written in the same second look older
-      // than the reload that prompted it.
-      root.reloadAt = Math.floor(Date.now() / 1000)
-      reloadGrace.restart()
-    }
-  }
-
-  // Long enough for the config to finish and rewrite the file; short enough
-  // that a bar left claiming per-monitor workspaces corrects itself promptly.
-  Timer {
-    id: reloadGrace
-    interval: 2500
-    onTriggered: root.staleSinceReload = root.stateLoadedAt() < root.reloadAt
-  }
-
-  function parseState(raw) {
-    try {
-      var parsed = JSON.parse(String(raw || ""))
-      return Util.isPlainObject(parsed) ? parsed : null
-    } catch (e) {
-      return null
-    }
-  }
-
-  FileView {
-    id: stateFile
-    path: root.statePath
-    watchChanges: true
-    printErrors: false
-    onLoaded: {
-      root.luaState = root.parseState(text())
-      // A rewrite at or after the reload is the answer that reload asked for.
-      if (root.stateLoadedAt() >= root.reloadAt) root.staleSinceReload = false
-    }
-    onLoadFailed: root.luaState = null
-    onFileChanged: reload()
-  }
-
-  // FileView cannot watch a path that does not exist yet, which is the case
-  // when the bindings.lua line is added while the shell is already running.
-  // Watch the directory instead — the same trick the bar uses for its own
-  // toggle flags — rather than polling for a file that usually never appears.
-  //
-  // Only until it does appear: this is $XDG_RUNTIME_DIR, a busy directory
-  // shared with every socket on the system, and there is one of these per
-  // screen. Once the file is read, stateFile watches it directly.
-  FileView {
-    path: root.stateDir
-    watchChanges: root.luaState === null
-    printErrors: false
-    onFileChanged: stateFile.reload()
-  }
-
-  // Clamped: a count of 0, null, or a non-number would leave a bar with an
-  // invalid column count and no dots to click.
+  // A persistent path rather than a runtime one: Hyprland parses its config
+  // before the shell starts, so a runtime file would not exist yet at login and
+  // the session would open with the wrong number of keys bound.
   readonly property int slotCount: {
-    var count = root.luaLoaded ? Number(root.luaState.count) : Number(root.setting("count", 5))
+    var count = Number(root.setting("count", 5))
     return count > 0 ? Math.max(1, Math.floor(count)) : 5
   }
+
+  readonly property string configPath: {
+    var home = Quickshell.env("HOME")
+    return home ? home + "/.config/omarchy/per-monitor-workspaces.conf" : ""
+  }
+
+  FileView {
+    id: configFile
+    path: root.configPath
+    atomicWrites: true
+    printErrors: false
+    // Confirm on the way out rather than on the way in: a setText issued before
+    // the view has settled is dropped silently, with neither signal, so the
+    // count is only considered published once the write actually lands.
+    onSaved: root.publishedCount = root.slotCount
+    onSaveFailed: publishDefer.restart()
+  }
+
+  // Rewritten only on a real change, so an ordinary shell restart does not
+  // churn a file Hyprland only reads at parse time anyway.
+  property int publishedCount: 0
+
+  function publishCount() {
+    if (root.configPath === "" || root.slotCount === root.publishedCount) return
+    configFile.setText("# Written by the Per-monitor Workspaces bar widget.\n"
+      + "# hypr/init.lua reads this to bind the same number of slots.\n"
+      + "count=" + root.slotCount + "\n")
+  }
+
+  onSlotCountChanged: publishDefer.restart()
+  Component.onCompleted: publishDefer.restart()
+
+  Timer { id: publishDefer; interval: 800; onTriggered: root.publishCount() }
 
   // ---------------------------------------------------------------- monitor
 
@@ -244,10 +184,52 @@ BarWidget {
   property string bindingsText: ""
   property string installError: ""
 
-  // Present already? Match on the plugin directory rather than the whole line,
-  // so a hand-placed variant (plain dofile, different quoting) still counts.
-  readonly property bool bindingsLinePresent:
-    root.bindingsText !== "" && root.bindingsText.indexOf(root.moduleName + "/hypr/init.lua") !== -1
+  // Read the file and look for the line, rather than asking the Lua half to
+  // announce itself. Direct, needs no handshake, and it correctly reports
+  // "absent" for a line that is present but commented out -- which an
+  // announcement cannot, because a file written before the comment went in
+  // stays on disk looking perfectly current.
+  //
+  // Matched on the plugin directory rather than the whole line, so a
+  // hand-placed variant with different quoting still counts.
+  readonly property bool bindingsLinePresent: {
+    if (root.bindingsText === "") return false
+
+    var lines = root.bindingsText.split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].replace(/^\s+/, "")
+      if (line.indexOf("--") === 0) continue
+      if (line.indexOf(root.moduleName + "/hypr/init.lua") !== -1) return true
+    }
+    return false
+  }
+
+  // Asked once. Someone who declines has declined, and the widget works without
+  // the shortcuts -- it just cannot give you keys.
+  readonly property string dismissPath: {
+    var home = Quickshell.env("HOME")
+    return home ? home + "/.local/state/omarchy/per-monitor-workspaces-offer-dismissed" : ""
+  }
+  property bool offerDismissed: true
+
+  FileView {
+    id: dismissFile
+    path: root.dismissPath
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.offerDismissed = true
+    onLoadFailed: root.offerDismissed = false
+  }
+
+  function dismissOffer() {
+    root.offerDismissed = true
+    root.offerOpen = false
+    if (root.dismissPath !== "") dismissFile.setText("dismissed\n")
+  }
+
+  // Only one bar asks, not one per screen.
+  readonly property bool showOffer: !root.bindingsLinePresent && !root.offerDismissed
+    && root.monitor !== null && Hyprland.focusedMonitor === root.monitor
 
   FileView {
     id: bindingsFile
@@ -292,16 +274,25 @@ BarWidget {
       + "-- the plugin costs these bindings rather than everything below this line.\n"
       + root.bindingsLine + "\n")
 
-    root.warningOpen = false
+    root.offerOpen = false
   }
 
   function copyBindingsLine() {
     if (!root.bar) return
     root.bar.run("printf %s " + Util.shellQuote(root.bindingsLine) + " | wl-copy")
-    root.warningOpen = false
+    root.offerOpen = false
   }
 
-  property bool warningOpen: false
+  property bool offerOpen: false
+
+  // Offered once, a moment after the bar has settled, and only if the shortcuts
+  // are genuinely absent. Accepting, copying or declining all close it for good.
+  Timer {
+    interval: 1200
+    running: true
+    repeat: false
+    onTriggered: if (root.showOffer) root.offerOpen = true
+  }
 
   // ---------------------------------------------------------------- actions
 
@@ -374,6 +365,76 @@ BarWidget {
     if (wheel.steps !== 0) root.cycleBy(wheel.steps > 0 ? -1 : 1)
   }
 
+  // -------------------------------------------------------------- adoption
+  //
+  // A screen that appears lands on whatever workspace Hyprland hands it, which
+  // is a global numbered one rather than anything in this screen's set. A dock
+  // can also put the same panel on a different connector than last time, and
+  // Hyprland restores workspaces per connector rather than per panel, so the
+  // two screens end up showing each other's. Both read the same way from here:
+  // a screen showing something outside its own set.
+  //
+  // This lives in the widget because Quickshell rides Hyprland's IPC socket,
+  // which announces a returning screen reliably. One instance per screen, each
+  // minding its own, so there is nothing to coordinate.
+  function showsOwnSlot() {
+    var active = root.monitor && root.monitor.activeWorkspace
+    if (!active) return false
+
+    var name = String(active.name)
+    for (var slot = 1; slot <= root.slotCount; slot++) {
+      if (name === root.slotName(slot)) return true
+    }
+    return false
+  }
+
+  // The slot to put it on: the first that already exists, so a workspace parked
+  // elsewhere while this screen was away comes home rather than being stranded.
+  function homeSlot() {
+    for (var slot = 1; slot <= root.slotCount; slot++) {
+      var name = root.slotName(slot)
+      if (root.workspaceByName(name) !== null) return name
+    }
+    return root.slotName(1)
+  }
+
+  function adopt() {
+    if (!root.monitor || root.prefix === "" || root.showsOwnSlot()) return
+
+    var name = root.homeSlot()
+    var workspace = root.workspaceByName(name)
+    var stranded = workspace !== null && workspace.monitor !== null
+      && workspace.monitor !== root.monitor
+
+    // One snippet, so the whole thing is atomic. A stranded workspace is
+    // carried over first -- focusing it would send us to where it is rather
+    // than bring it where it belongs -- and a move relocates without
+    // displaying, so the focus still has to follow. Hyprland creates a missing
+    // workspace on whichever monitor is focused, which is why focus travels
+    // here at all, and why it is handed straight back.
+    root.runLua(
+      "local origin = hl.get_active_monitor();"
+      + (stranded
+          ? " hl.dispatch(hl.dsp.workspace.move({ workspace = " + root.quoteLua("name:" + name)
+            + ", monitor = " + root.quoteLua(String(root.monitor.name)) + " }));"
+          : "")
+      + " " + root.focusMonitorLua()
+      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }));"
+      + " if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end")
+  }
+
+  // Settle first: a dock brings several screens up at once and Hyprland is
+  // still placing them. Re-checked rather than assumed when the timer fires.
+  Timer {
+    id: adoptSettle
+    interval: 700
+    onTriggered: root.adopt()
+  }
+
+  // The panel behind this bar changed, or this bar is new. Both mean "work out
+  // where this screen should be", and prefix covers a connector swap too.
+  onPrefixChanged: adoptSettle.restart()
+
   // ----------------------------------------------------------------- layout
 
   readonly property real trailingGap: root.vertical ? 0 : Style.spaceReal(1.5)
@@ -385,27 +446,9 @@ BarWidget {
     id: grid
     anchors.fill: parent
     anchors.rightMargin: root.trailingGap
-    columns: root.vertical ? 1 : Math.max(1, root.entries.length + (root.luaLoaded ? 0 : 1))
+    columns: root.vertical ? 1 : Math.max(1, root.entries.length)
     columnSpacing: root.vertical ? 0 : Style.space(1)
     rowSpacing: root.vertical ? Style.space(2) : 0
-
-    // Not a workspace, so not in the ring — a sibling the layout skips while
-    // the keybindings are in place.
-    WidgetButton {
-      id: warningButton
-      visible: !root.luaLoaded
-      bar: root.bar
-      text: root.warningGlyph
-      active: true
-      tooltipText: "Per-monitor workspaces are not active — click to fix"
-      horizontalMargin: 6
-      verticalPadding: 6
-      fixedWidth: root.vertical ? root.barSize : Style.space(20)
-      fixedHeight: root.barSize
-      onPressed: function(button) {
-        if (button === Qt.LeftButton) root.warningOpen = !root.warningOpen
-      }
-    }
 
     Repeater {
       model: root.entries
@@ -441,16 +484,16 @@ BarWidget {
   }
 
   PopupCard {
-    id: warningPopup
-    anchorItem: warningButton
+    id: offerPopup
+    anchorItem: root
     bar: root.bar
     owner: root
-    open: root.warningOpen && !root.luaLoaded
-    contentWidth: warningPopup.fittedContentWidth(Style.space(380))
-    contentHeight: warningPopup.fittedContentHeight(warningColumn.implicitHeight)
+    open: root.offerOpen && root.showOffer
+    contentWidth: offerPopup.fittedContentWidth(Style.space(380))
+    contentHeight: offerPopup.fittedContentHeight(offerColumn.implicitHeight)
 
     Column {
-      id: warningColumn
+      id: offerColumn
       anchors.fill: parent
       spacing: Style.space(8)
 
@@ -460,12 +503,11 @@ BarWidget {
         color: root.bar ? root.bar.foreground : Color.foreground
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
-        text: "This bar is drawing per-monitor workspaces, but the half that "
-          + "makes them work is not loaded. That file is what gives each screen a "
-          + "set of its own — it creates the workspaces, keeps them on the right "
-          + "screen when you dock, and points SUPER+N at them. Until it runs, "
-          + "these dots are just dots and SUPER+N still switches Omarchy's global "
-          + "workspaces."
+        text: "Per-monitor workspaces are running. Adding one line to your "
+          + "Hyprland config gives them keyboard shortcuts as well — SUPER+1..N "
+          + "for this screen's workspaces, cycling, and moving windows between "
+          + "screens. Strongly recommended: without it SUPER+N still switches "
+          + "Omarchy's global workspaces, which is not what these dots show."
       }
 
       Text {
@@ -515,6 +557,14 @@ BarWidget {
           fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
           onClicked: root.copyBindingsLine()
         }
+
+        Button {
+          text: "Not now"
+          bordered: true
+          foreground: root.bar ? root.bar.foreground : Color.foreground
+          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          onClicked: root.dismissOffer()
+        }
       }
 
       Text {
@@ -524,8 +574,8 @@ BarWidget {
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.bodySmall
         opacity: 0.7
-        text: "Hyprland reloads on save, and this warning disappears on its own. "
-          + "The previous file is kept as bindings.lua.bak."
+        text: "Hyprland reloads on save, so the shortcuts work straight away. The "
+          + "previous file is kept as bindings.lua.bak. This is only asked once."
       }
     }
   }

@@ -18,7 +18,33 @@
 -- Keep the count in step with the bar widget's "count" setting, which decides
 -- how many slots each bar draws.
 
-local COUNT = math.max(1, math.floor(tonumber(_G.per_monitor_workspaces_count) or 5))
+-- The bar widget owns the slot count -- it is one of its settings -- and writes
+-- it here for this file to read. A persistent path rather than a runtime one:
+-- Hyprland parses its config before the shell starts, so at login a runtime
+-- file would not exist yet and the session would begin with the wrong number of
+-- keys bound until something reloaded.
+--
+-- `per_monitor_workspaces_count` still wins where it is set, for anyone running
+-- these bindings without the widget.
+local function configured_count()
+  if _G.per_monitor_workspaces_count then return tonumber(_G.per_monitor_workspaces_count) end
+
+  local home = os.getenv("HOME")
+  if not home then return nil end
+
+  local file = io.open(home .. "/.config/omarchy/per-monitor-workspaces.conf", "r")
+  if not file then return nil end
+
+  local count
+  for line in file:lines() do
+    count = line:match("^%s*count%s*=%s*(%d+)") or count
+  end
+  file:close()
+
+  return tonumber(count)
+end
+
+local COUNT = math.max(1, math.floor(configured_count() or 5))
 
 -- Description, not connector name: DP-2/DP-3 can swap on replug, which would
 -- swap two monitors' workspaces along with them.
@@ -310,109 +336,3 @@ o.bind("SUPER + mouse_up", "Scroll active workspace backward", cycle(-1))
 -- prevent. Hyprland's per-monitor variant does what the key reads like.
 hl.unbind("SUPER + CTRL + TAB")
 o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "previous_per_monitor" }))
-
--- A screen that appears lands on whatever workspace Hyprland hands it, which
--- is a global numbered one rather than anything in this screen's set. Undock
--- and redock and every external comes back sitting on a throwaway workspace
--- outside its own slots. Put each new screen on one of its own instead.
---
--- Prefer a slot that already exists: while the screen was away its workspaces
--- were parked on a surviving one, so focusing a parked slot here is also what
--- brings it home, windows and all.
--- Put a screen on one of its own slots, preferring one that already exists --
--- while the screen was away its workspaces were parked on a survivor, so
--- preferring the live one is also what brings it home, windows and all.
--- Returns whether anything was actually moved.
-local function adopt_monitor(monitor, key)
-  local names = slot_names(key)
-  local active = monitor.active_workspace
-
-  -- Any of its own slots will do. Only a screen showing something outside its
-  -- set gets moved, so this never drags you off a slot you chose.
-  for _, name in ipairs(names) do
-    if active and active.name == name then return false end
-  end
-
-  local target, workspace = names[1], nil
-  for _, name in ipairs(names) do
-    local existing = hl.get_workspace("name:" .. name)
-    if existing then target, workspace = name, existing break end
-  end
-
-  -- Alive but on the wrong screen: parked on a survivor while this one was
-  -- away, or left behind on the connector this panel used to sit on. Bring the
-  -- workspace across first -- focusing it would send us to where it is instead
-  -- of bringing it to where it belongs.
-  if workspace and workspace.monitor and workspace.monitor.id ~= monitor.id then
-    hl.dispatch(hl.dsp.workspace.move({ workspace = "name:" .. target, monitor = monitor.name }))
-  end
-
-  -- Then put it on screen. A move relocates a workspace without displaying it,
-  -- and a slot that does not exist yet has to be focused into being -- Hyprland
-  -- creates a missing workspace on whichever monitor is focused, so focus has
-  -- to travel there.
-  hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
-  hl.dispatch(hl.dsp.focus({ workspace = "name:" .. target }))
-  return true
-end
-
--- Two things go wrong when a screen comes back. It lands on whatever Hyprland
--- hands it, which is a global numbered workspace; and a dock can put the same
--- panel on a different connector than last time, which leaves the two screens
--- showing each other's workspaces, because Hyprland restores them per connector
--- rather than per panel. Both read the same way from here -- a screen showing
--- something outside its own set -- and both are fixed the same way.
-local function adopt_all()
-  local origin = hl.get_active_monitor()
-  local moved = false
-
-  for _, monitor in ipairs(hl.get_monitors()) do
-    if adopt_monitor(monitor, monitor_key(monitor)) then moved = true end
-  end
-
-  -- Hand focus back once for the whole pass rather than after each screen: a
-  -- dock brings several up at once, and every focus change wakes every bar.
-  if moved and origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end
-end
-
--- Deferred because a reload that got us here may still be applying the monitor
--- rules that say where these screens are, and a dock brings several up at once.
-local function reconcile()
-  hl.timer(adopt_all, { timeout = 500, type = "oneshot" })
-end
-
--- Two triggers for two different facts. monitor.added is "a screen appeared",
--- and it is the one that does the work on a dock -- it fires for a reconnected
--- connector, not just a brand new output. Running on load covers "this file
--- just loaded, reconcile whatever is true now": a fresh login, or a session
--- that was already wrong when the line was first added to bindings.lua.
-reconcile()
-hl.on("monitor.added", reconcile)
-
--- Tell the bar widget that this file is loaded, and how many slots it bound.
--- The widget reads the count from here rather than carrying its own, so the
--- two halves cannot drift; and its absence is how the widget knows to warn.
--- A bar drawing per-monitor slots while SUPER+N still switches globally is the
--- one broken state that looks like a bug in the widget rather than a missing
--- line in bindings.lua.
---
--- The runtime dir goes away with the session, and the instance signature
--- stamps which Hyprland wrote it, so a file left behind by an earlier login
--- cannot pass for this one.
-local function write_state()
-  local runtime = os.getenv("XDG_RUNTIME_DIR")
-  if not runtime or runtime == "" then return end
-
-  local file = io.open(runtime .. "/omarchy-per-monitor-workspaces.json", "w")
-  if not file then return end
-
-  local instance = (os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""):gsub('[\\"]', "\\%0")
-  -- `loaded` changes every time this file runs, which is how the widget tells
-  -- "still loaded" from "was loaded earlier this session". The instance stamp
-  -- only rules out a file left by a previous login; it cannot notice the line
-  -- being commented out and Hyprland reloaded without it.
-  file:write(string.format('{"count":%d,"instance":"%s","loaded":%d}\n', COUNT, instance, os.time()))
-  file:close()
-end
-
-write_state()
