@@ -167,11 +167,13 @@ display glyph:
 Hover one to see which screen and slot it came from. `SUPER + TAB` reaches them
 too, so nothing you had open is stranded.
 
-Plug the screen back in and its workspaces come home with their windows, and it
-lands on the slot it was showing before rather than on some workspace outside
-its own set. Left to itself, Hyprland hands a returning screen a fresh global
-numbered workspace, so after every dock you would be sitting on a throwaway one
-— the plugin puts each screen back on a slot of its own instead.
+Plug the screen back in and its workspaces come home with their windows, on the
+screen they belong to. Left to itself Hyprland hands a returning screen a fresh
+global numbered workspace, and a dock can also put the same panel on a
+different connector than last time — which makes two screens show each other's
+workspaces, since Hyprland restores them per connector. Either way you would be
+sitting on something outside that screen's own set after every dock. The plugin
+sorts both out on the config reload that a dock triggers.
 
 They deliberately are *not* labelled with a number: the slot number they carry
 belongs to the screen they came from, so a parked "4" sitting after this

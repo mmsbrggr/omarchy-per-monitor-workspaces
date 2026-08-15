@@ -296,47 +296,99 @@ o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "pre
 -- Prefer a slot that already exists: while the screen was away its workspaces
 -- were parked on a surviving one, so focusing a parked slot here is also what
 -- brings it home, windows and all.
+local function find_workspace(name)
+  for _, workspace in ipairs(hl.get_workspaces()) do
+    if workspace.name == name then return workspace end
+  end
+  return nil
+end
+
+-- The slot this screen should be showing, plus the live workspace behind it if
+-- there is one. Preferring a slot that already exists is what brings a screen's
+-- workspaces home instead of stranding them.
 local function home_slot(monitor)
   local key = monitor_key(monitor)
 
-  local existing = {}
-  for _, workspace in ipairs(hl.get_workspaces()) do
-    existing[workspace.name] = true
-  end
-
   for slot = 1, COUNT do
     local name = key .. ":" .. slot
-    if existing[name] then return name end
+    local workspace = find_workspace(name)
+    if workspace then return name, workspace end
   end
 
-  return key .. ":1"
+  return key .. ":1", nil
+end
+
+local function shows_own_slot(monitor)
+  local active = monitor.active_workspace
+  if not active then return false end
+
+  local key = monitor_key(monitor)
+  for slot = 1, COUNT do
+    if active.name == key .. ":" .. slot then return true end
+  end
+
+  return false
 end
 
 local function adopt_monitor(monitor)
-  local name = home_slot(monitor)
-  local active = monitor.active_workspace
-  if active and active.name == name then return end
+  -- Any of its own slots will do. Only a screen showing something outside its
+  -- set gets moved, so this never drags you off a slot you chose.
+  if shows_own_slot(monitor) then return end
 
-  -- Hyprland creates a missing workspace on whichever monitor is focused, and
-  -- set_workspace cannot conjure one, so the slot has to be focused into
-  -- existence on the new screen and the focus handed straight back.
+  local name, workspace = home_slot(monitor)
+
+  -- Alive but on the wrong screen: parked on a survivor while this one was
+  -- away, or left behind on the connector this panel used to sit on. Bring the
+  -- workspace across first -- focusing it would send us to where it is instead
+  -- of bringing it to where it belongs.
+  if workspace and workspace.monitor and workspace.monitor.id ~= monitor.id then
+    hl.dispatch(hl.dsp.workspace.move({ workspace = "name:" .. name, monitor = monitor.name }))
+  end
+
+  -- Then put it on screen. A move relocates a workspace without displaying it,
+  -- and a slot that does not exist yet has to be focused into being -- Hyprland
+  -- creates a missing workspace on whichever monitor is focused, so focus has
+  -- to travel there and come straight back.
   local origin = hl.get_active_monitor()
   hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
   hl.dispatch(hl.dsp.focus({ workspace = "name:" .. name }))
   if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end
 end
 
+-- Docking is a config reload, and that is the hook.
+--
+-- monitor.added never reaches a Lua handler for a connector that comes back.
+-- hyprdynamicmonitors, which Omarchy ships, answers the layout change by
+-- running `hyprctl reload`, and that reload re-registers every handler about a
+-- second after the event it was waiting for has already gone by. Nothing to
+-- subscribe to -- but the reload re-runs this file once the new layout has
+-- settled, which is exactly the moment the screens need sorting out.
+--
+-- Two things need sorting. A screen coming back lands on whatever Hyprland
+-- hands it, which is a global numbered workspace; and a dock can put the same
+-- panel on a different connector than last time, leaving two screens showing
+-- each other's workspaces. Both read as a screen displaying something outside
+-- its own set, and both are fixed the same way.
+local function adopt_all()
+  for _, monitor in ipairs(hl.get_monitors()) do
+    adopt_monitor(monitor)
+  end
+end
+
+-- Deferred because the reload that got us here is still applying the monitor
+-- rules that say where these screens are.
+hl.timer(adopt_all, { timeout = 500, type = "oneshot" })
+
+-- Still worth listening for, to catch an output that appears without a reload
+-- behind it: a virtual display, or a machine with no dynamic-monitor daemon.
 hl.on("monitor.added", function(monitor)
   if not monitor then return end
 
-  -- Let Hyprland finish attaching the output before retargeting it; a dock
-  -- brings several up at once. Re-resolve by name rather than holding the
-  -- monitor across the wait, in case it goes away again first.
   local name = monitor.name
   hl.timer(function()
     local current = hl.get_monitor(name)
     if current then adopt_monitor(current) end
-  end, { timeout = 250, type = "oneshot" })
+  end, { timeout = 500, type = "oneshot" })
 end)
 
 -- Tell the bar widget that this file is loaded, and how many slots it bound.
