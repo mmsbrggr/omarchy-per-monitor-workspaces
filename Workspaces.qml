@@ -15,8 +15,8 @@ BarWidget {
   id: root
   moduleName: "io.github.mmsbrggr.per-monitor-workspaces"
 
-  readonly property string warningGlyph: ""
-  readonly property string parkedGlyph: ""
+  readonly property string warningGlyph: ""
+  readonly property string parkedGlyph: ""
   readonly property string focusedGlyph: "󱓻"
 
   // ------------------------------------------------------------------ state
@@ -25,10 +25,8 @@ BarWidget {
   // widget follows that count rather than keeping its own, so the two halves
   // cannot drift; the `count` setting below is only the fallback for a bar
   // whose keybindings were never installed.
-  readonly property string statePath: {
-    var runtime = Quickshell.env("XDG_RUNTIME_DIR")
-    return runtime ? runtime + "/omarchy-per-monitor-workspaces.json" : ""
-  }
+  readonly property string stateDir: Quickshell.env("XDG_RUNTIME_DIR") || ""
+  readonly property string statePath: stateDir ? stateDir + "/omarchy-per-monitor-workspaces.json" : ""
   readonly property string hyprlandInstance: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || ""
 
   property var luaState: null
@@ -46,7 +44,7 @@ BarWidget {
   function parseState(raw) {
     try {
       var parsed = JSON.parse(String(raw || ""))
-      return parsed && typeof parsed === "object" ? parsed : null
+      return Util.isPlainObject(parsed) ? parsed : null
     } catch (e) {
       return null
     }
@@ -62,22 +60,22 @@ BarWidget {
     onFileChanged: reload()
   }
 
-  // A file that does not exist yet cannot be watched, so poll gently until it
-  // turns up — that is the case where someone adds the bindings.lua line while
-  // the shell is already running. Stops as soon as the file is read.
-  Timer {
-    interval: 5000
-    repeat: true
-    running: root.statePath !== "" && root.luaState === null
-    onTriggered: stateFile.reload()
+  // FileView cannot watch a path that does not exist yet, which is the case
+  // when the bindings.lua line is added while the shell is already running.
+  // Watch the directory instead — the same trick the bar uses for its own
+  // toggle flags — rather than polling for a file that usually never appears.
+  FileView {
+    path: root.stateDir
+    watchChanges: true
+    printErrors: false
+    onFileChanged: stateFile.reload()
   }
 
   // Clamped: a count of 0, null, or a non-number would leave a bar with an
   // invalid column count and no dots to click.
   readonly property int slotCount: {
-    var fromLua = root.luaLoaded && root.luaState ? Number(root.luaState.count) : NaN
-    if (fromLua > 0) return Math.max(1, Math.floor(fromLua))
-    return Math.max(1, Number(root.setting("count", 5)) || 5)
+    var count = root.luaLoaded ? Number(root.luaState.count) : Number(root.setting("count", 5))
+    return count > 0 ? Math.max(1, Math.floor(count)) : 5
   }
 
   // ---------------------------------------------------------------- monitor
@@ -135,30 +133,19 @@ BarWidget {
     return name.substring(0, separator) + " · slot " + name.substring(separator + 1)
   }
 
-  // This monitor's own slots first, in slot order, then everything else living
-  // on it: workspaces parked here while their screen is disconnected, and any
-  // global numbered workspace something else created. Same ring SUPER+TAB
-  // walks, so nothing TAB can reach is missing a dot.
+  // Exactly the ring SUPER+TAB walks, in the same order: this monitor's own
+  // slots first, then everything else living on it — workspaces parked here
+  // while their screen is disconnected, and any global numbered workspace
+  // something else created. Nothing that is not a workspace belongs in here.
   function buildEntries() {
     var items = []
     if (root.prefix === "") return items
-
-    if (!root.luaLoaded) {
-      items.push({
-        kind: "warning",
-        name: "",
-        label: root.warningGlyph,
-        tooltip: "Per-monitor Workspaces: keybindings not loaded. Add the plugin's "
-          + "hypr/init.lua line to ~/.config/hypr/bindings.lua — until then SUPER+N "
-          + "still switches global workspaces."
-      })
-    }
 
     var own = ({})
     for (var slot = 1; slot <= root.slotCount; slot++) {
       var name = root.slotName(slot)
       own[name] = true
-      items.push({ kind: "slot", name: name, label: String(slot), tooltip: "" })
+      items.push({ name: name, label: String(slot), tooltip: "", parked: false })
     }
 
     var parked = []
@@ -167,6 +154,8 @@ BarWidget {
       var workspace = values[i]
       var workspaceName = String(workspace.name || "")
       if (workspace.monitor !== root.monitor) continue
+      // Quickshell's HyprlandWorkspace exposes no `special` flag, so the name
+      // is the only seam. The Lua half uses workspace.special for the same cut.
       if (own[workspaceName] || workspaceName.indexOf("special:") === 0) continue
       parked.push(workspace)
     }
@@ -175,10 +164,10 @@ BarWidget {
     for (var p = 0; p < parked.length; p++) {
       var parkedName = String(parked[p].name)
       items.push({
-        kind: "parked",
         name: parkedName,
         label: root.parkedGlyph,
-        tooltip: root.parkedTooltip(parkedName)
+        tooltip: root.parkedTooltip(parkedName),
+        parked: true
       })
     }
 
@@ -187,63 +176,76 @@ BarWidget {
 
   readonly property var entries: root.buildEntries()
 
+
   // ---------------------------------------------------------------- actions
 
+  // Hyprland's dispatch evaluates Lua source, so an action that has to happen
+  // atomically — focus a monitor, then act on it — travels as one snippet.
   function quoteLua(value) {
-    return "\"" + String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + "\""
+    return "\"" + String(value)
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, "\\\"")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      + "\""
+  }
+
+  // Straight down the socket Quickshell already holds open, rather than
+  // spawning a login shell and hyprctl per click.
+  function runLua(body) {
+    Hyprland.dispatch("function() " + body + " end")
+  }
+
+  function focusMonitorLua() {
+    return "hl.dispatch(hl.dsp.focus({ monitor = " + root.quoteLua(root.monitor.name) + " }));"
   }
 
   // Focus the monitor first: an unvisited slot does not exist yet, and Hyprland
   // creates a missing workspace on whichever monitor is focused. Without this,
   // clicking another screen's dot would build its workspace on this one.
   function focusWorkspace(name) {
-    if (!root.bar || !root.monitor || name === "") return
+    if (!root.monitor || name === "") return
 
-    var lua = "function()" +
-      " hl.dispatch(hl.dsp.focus({ monitor = " + root.quoteLua(root.monitor.name) + " }));" +
-      " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }))" +
-      " end"
-    root.bar.run("hyprctl dispatch " + Util.shellQuote(lua))
+    root.runLua(root.focusMonitorLua()
+      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }))")
   }
 
   // Right-click: send the focused window to this slot without following it,
-  // the mouse spelling of SUPER+SHIFT+ALT+N. Same monitor-first dance as
-  // above, since an unused slot is created wherever focus happens to be — but
-  // the window travels by address, so focusing away cannot move the wrong one.
+  // the mouse spelling of SUPER+SHIFT+ALT+N. Same monitor-first dance, since an
+  // unused slot is created wherever focus happens to be — but the window
+  // travels by address, so focusing away cannot move the wrong one.
   function moveWindowTo(name) {
-    if (!root.bar || !root.monitor || name === "") return
+    if (!root.monitor || name === "") return
 
-    var lua = "function()" +
-      " local window = hl.get_active_window(); if not window then return end;" +
-      " local origin = hl.get_active_monitor();" +
-      " hl.dispatch(hl.dsp.focus({ monitor = " + root.quoteLua(root.monitor.name) + " }));" +
-      " hl.dispatch(hl.dsp.window.move({ workspace = " + root.quoteLua("name:" + name) +
-      ", window = \"address:\" .. window.address, follow = false }));" +
-      " if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end" +
-      " end"
-    root.bar.run("hyprctl dispatch " + Util.shellQuote(lua))
+    root.runLua(
+      "local window = hl.get_active_window(); if not window then return end;"
+      + " local origin = hl.get_active_monitor();"
+      + " " + root.focusMonitorLua()
+      + " hl.dispatch(hl.dsp.window.move({ workspace = " + root.quoteLua("name:" + name)
+      + ", window = \"address:\" .. window.address, follow = false }));"
+      + " if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end")
   }
 
   // Scrolling the widget walks the same ring as SUPER+TAB, but for the screen
   // this bar is drawn on rather than the focused one. Wheel down goes forward,
   // matching Omarchy's SUPER+scroll.
+  property real wheelAccumulator: 0
+
   function cycleBy(step) {
-    var ring = []
-    for (var i = 0; i < root.entries.length; i++)
-      if (root.entries[i].kind !== "warning") ring.push(root.entries[i].name)
+    var ring = root.entries
     if (ring.length < 2) return
 
     var active = root.monitor && root.monitor.activeWorkspace
       ? String(root.monitor.activeWorkspace.name) : ""
-    var index = 0
-    for (var r = 0; r < ring.length; r++) {
-      if (ring[r] === active) {
-        index = r
-        break
-      }
-    }
+    var index = Math.max(0, ring.map(function(entry) { return entry.name }).indexOf(active))
 
-    root.focusWorkspace(ring[((index + step) % ring.length + ring.length) % ring.length])
+    root.focusWorkspace(ring[((index + step) % ring.length + ring.length) % ring.length].name)
+  }
+
+  function onWheel(delta) {
+    var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
+    root.wheelAccumulator = wheel.remainder
+    if (wheel.steps !== 0) root.cycleBy(wheel.steps > 0 ? -1 : 1)
   }
 
   // ----------------------------------------------------------------- layout
@@ -257,9 +259,26 @@ BarWidget {
     id: grid
     anchors.fill: parent
     anchors.rightMargin: root.trailingGap
-    columns: root.vertical ? 1 : Math.max(1, root.entries.length)
+    columns: root.vertical ? 1 : Math.max(1, root.entries.length + (root.luaLoaded ? 0 : 1))
     columnSpacing: root.vertical ? 0 : Style.space(1)
     rowSpacing: root.vertical ? Style.space(2) : 0
+
+    // Not a workspace, so not in the ring — a sibling the layout skips while
+    // the keybindings are in place.
+    WidgetButton {
+      visible: !root.luaLoaded
+      bar: root.bar
+      text: root.warningGlyph
+      active: true
+      pressable: false
+      tooltipText: "Per-monitor Workspaces: keybindings not loaded. Add the plugin's "
+        + "hypr/init.lua line to ~/.config/hypr/bindings.lua — until then SUPER+N "
+        + "still switches global workspaces."
+      horizontalMargin: 6
+      verticalPadding: 6
+      fixedWidth: root.vertical ? root.barSize : Style.space(20)
+      fixedHeight: root.barSize
+    }
 
     Repeater {
       model: root.entries
@@ -271,29 +290,25 @@ BarWidget {
         readonly property bool occupied: workspace !== null && workspace.toplevels.values.length > 0
         // This monitor's active slot, not the globally focused one, so every bar
         // reports where its own screen is sitting.
-        readonly property bool focused: modelData.kind !== "warning"
-          && root.monitor !== null && root.monitor.activeWorkspace !== null
+        readonly property bool focused: root.monitor !== null && root.monitor.activeWorkspace !== null
           && String(root.monitor.activeWorkspace.name) === modelData.name
 
         bar: root.bar
         text: focused ? root.focusedGlyph : modelData.label
-        // Parked workspaces belong to another screen and only borrow this one;
-        // the warning is not a workspace at all. Both take the bar's accent so
-        // neither passes as one of this monitor's slots.
-        active: modelData.kind !== "slot"
+        // Parked workspaces belong to another screen and only borrow this one,
+        // so they take the bar's accent rather than passing as slot N.
+        active: modelData.parked
         tooltipText: modelData.tooltip
-        pressable: modelData.kind !== "warning"
-        opacity: modelData.kind === "warning" || occupied || focused ? 1 : 0.5
+        opacity: occupied || focused ? 1 : 0.5
         horizontalMargin: 6
         verticalPadding: 6
         fixedWidth: root.vertical ? root.barSize : Style.space(20)
         fixedHeight: root.barSize
         onPressed: function(button) {
-          if (modelData.kind === "warning") return
           if (button === Qt.RightButton) root.moveWindowTo(modelData.name)
           else if (button === Qt.LeftButton) root.focusWorkspace(modelData.name)
         }
-        onWheelMoved: function(delta) { root.cycleBy(delta > 0 ? -1 : 1) }
+        onWheelMoved: function(delta) { root.onWheel(delta) }
       }
     }
   }

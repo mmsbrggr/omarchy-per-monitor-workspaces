@@ -130,11 +130,25 @@ end
 -- exactly that, so it is rebound below to move what is on the workspace and
 -- leave every workspace on the screen it is named for.
 
+-- The monitor in that direction and the one we are on, or nothing when there
+-- is no screen that way. Returning both keeps callers from asking the
+-- compositor for the active monitor a second time.
 local function target_monitor(selector)
   local monitor = hl.get_monitor(selector)
   local active = hl.get_active_monitor()
   if not monitor or not active or monitor.id == active.id then return nil end
-  return monitor
+  return monitor, active
+end
+
+-- Both sides of a cross-monitor action: what this screen is showing and what
+-- the target screen is showing.
+local function active_workspaces(selector)
+  local monitor, active = target_monitor(selector)
+  if not monitor then return nil end
+
+  local from, to = active.active_workspace, monitor.active_workspace
+  if not from or not to then return nil end
+  return monitor, from, to
 end
 
 local function focus_monitor(selector)
@@ -168,9 +182,10 @@ local function window_addresses(workspace)
 end
 
 local function move_all(addresses, workspace)
+  local selector = "name:" .. workspace.name
   for _, address in ipairs(addresses) do
     hl.dispatch(hl.dsp.window.move({
-      workspace = "name:" .. workspace.name,
+      workspace = selector,
       window = "address:" .. address,
       follow = false,
     }))
@@ -179,12 +194,8 @@ end
 
 local function send_workspace(selector)
   return function()
-    local origin = hl.get_active_monitor()
-    local monitor = target_monitor(selector)
-    if not origin or not monitor then return end
-
-    local from, to = origin.active_workspace, monitor.active_workspace
-    if not from or not to then return end
+    local monitor, from, to = active_workspaces(selector)
+    if not monitor then return end
 
     move_all(window_addresses(from), to)
     hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
@@ -193,12 +204,8 @@ end
 
 local function swap_workspaces(selector)
   return function()
-    local origin = hl.get_active_monitor()
-    local monitor = target_monitor(selector)
-    if not origin or not monitor then return end
-
-    local from, to = origin.active_workspace, monitor.active_workspace
-    if not from or not to then return end
+    local _, from, to = active_workspaces(selector)
+    if not from then return end
 
     -- Snapshot both sides before moving anything: the first move mutates the
     -- lists the second would otherwise be reading.
