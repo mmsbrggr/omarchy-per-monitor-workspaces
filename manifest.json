@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.mmsbrggr.per-monitor-workspaces",
+  "name": "Per-monitor Workspaces",
+  "version": "1.0.0",
+  "author": "Marcel Moosbrugger",
+  "license": "MIT",
+  "description": "Independent workspaces per monitor: SUPER+N always means this screen's Nth workspace",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Workspaces.qml"
+  },
+  "barWidget": {
+    "displayName": "Per-monitor Workspaces",
+    "description": "Workspace indicators scoped to the monitor each bar is on",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left",
+    "defaults": {
+      "count": 5
+    },
+    "schema": [
+      {
+        "key": "count",
+        "type": "number",
+        "label": "Workspaces per monitor",
+        "description": "Fallback only. When hypr/init.lua is loaded the widget follows per_monitor_workspaces_count and ignores this.",
+        "defaultValue": 5
+      }
+    ]
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.workspaces"
+  }
+}
