@@ -111,9 +111,16 @@ These move **windows, not workspaces**: every workspace stays on the screen it
 belongs to, and what travels is what is on it. Windows land on whatever the
 target screen is currently showing.
 
-Focus lands where you would expect it to. Sending follows what you sent, so you
-end up on your own window rather than on whatever was already over there.
-Swapping keeps you on the screen you are looking at, on whatever just arrived.
+Focus follows your windows: after any of these you are on the screen they went
+to, on one of the windows that travelled, rather than on whatever happened to be
+sitting there already.
+
+Swapping keeps both screens' tiling exactly as it was — a master-and-stack
+arrives as a master-and-stack. It trades the two workspaces between the screens
+and then trades their names back, so nothing is ever re-tiled and every
+workspace still belongs to the screen it is named for. Sending, by contrast,
+merges into whatever is already on the target, so the arriving windows are
+tiled in alongside it.
 
 ### With the mouse
 

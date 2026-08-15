@@ -225,23 +225,31 @@ local function send_workspace(selector)
   end
 end
 
+-- A name no workspace of ours will ever have, borrowed for a moment mid-swap.
+local SWAP_SCRATCH = "__per-monitor-workspaces-swap"
+
 local function swap_workspaces(selector)
   return function()
-    local _, origin, from, to = active_workspaces(selector)
-    if not origin then return end
+    local monitor, origin, from, to = active_workspaces(selector)
+    if not monitor then return end
 
-    -- Snapshot both sides before moving anything: the first move mutates the
-    -- lists the second would otherwise be reading.
-    local outgoing, incoming = window_addresses(from), window_addresses(to)
-    move_all(outgoing, to)
-    move_all(incoming, from)
+    -- Swap the workspaces themselves rather than their windows. Carrying
+    -- windows across one at a time drops each one wherever the far layout
+    -- happens to put it, so a master-and-stack arrives as an arbitrary pile;
+    -- swapping the workspaces keeps both arrangements exactly as they were,
+    -- and is one compositor operation rather than one per window.
+    --
+    -- That leaves each workspace on the screen the other one is named for, so
+    -- trade the names back. Both names are still taken at that point, hence the
+    -- third one in the middle.
+    local here, there = from.name, to.name
+    hl.dispatch(hl.dsp.workspace.swap_monitors({ monitor1 = origin.name, monitor2 = monitor.name }))
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. here, name = SWAP_SCRATCH }))
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. there, name = here }))
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. SWAP_SCRATCH, name = there }))
 
-    -- Stay on the screen you are looking at, on whatever just arrived there.
-    if #incoming > 0 then
-      focus_window(incoming[1])
-    else
-      hl.dispatch(hl.dsp.focus({ monitor = origin.name }))
-    end
+    -- Follow the windows you just sent over.
+    hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
   end
 end
 
