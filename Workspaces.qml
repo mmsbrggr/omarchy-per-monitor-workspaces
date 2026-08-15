@@ -15,9 +15,9 @@ BarWidget {
   id: root
   moduleName: "io.github.mmsbrggr.per-monitor-workspaces"
 
-  readonly property string warningGlyph: ""
-  readonly property string parkedGlyph: ""
-  readonly property string focusedGlyph: "󱓻"
+  readonly property string warningGlyph: "\uF071"
+  readonly property string parkedGlyph: "\uF108"
+  readonly property string focusedGlyph: "\uDB85\uDCFB"
 
   // ------------------------------------------------------------------ state
   //
