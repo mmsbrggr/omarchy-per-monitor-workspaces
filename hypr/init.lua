@@ -379,6 +379,21 @@ end
 -- rules that say where these screens are.
 hl.timer(adopt_all, { timeout = 500, type = "oneshot" })
 
+-- The bar widget's way in, since neither hook above is guaranteed. The reload
+-- one needs something to be issuing `hyprctl reload` on a dock -- true with
+-- hyprdynamicmonitors, which is not part of Omarchy -- and monitor.added does
+-- not arrive for a connector that comes back.
+--
+-- Hyprland's IPC socket does announce a returning screen, reliably; Quickshell
+-- is built on that socket, so the widget hears it when this file cannot. It
+-- calls in here rather than acting itself, so the policy stays in one place.
+-- Nothing calls it when the widget is not installed, and calling it when this
+-- file is not loaded is a no-op, so either half works alone.
+_G.per_monitor_workspaces_adopt = function(name)
+  local monitor = name and hl.get_monitor(name) or nil
+  if monitor then adopt_monitor(monitor) else adopt_all() end
+end
+
 -- Still worth listening for, to catch an output that appears without a reload
 -- behind it: a virtual display, or a machine with no dynamic-monitor daemon.
 hl.on("monitor.added", function(monitor)

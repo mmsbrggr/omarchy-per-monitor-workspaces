@@ -173,7 +173,14 @@ global numbered workspace, and a dock can also put the same panel on a
 different connector than last time — which makes two screens show each other's
 workspaces, since Hyprland restores them per connector. Either way you would be
 sitting on something outside that screen's own set after every dock. The plugin
-sorts both out on the config reload that a dock triggers.
+sorts both out.
+
+It has to notice the dock to do that, and Hyprland's Lua side is no help here —
+`monitor.added` never arrives for a connector that comes back. What does arrive
+is the IPC event the bar is built on, so the widget spots the change and asks
+the keybindings to re-check that screen. The keybindings decide; they leave a
+screen alone unless it is showing something outside its own set. Each half also
+covers for the other, so neither is required for the other to work.
 
 They deliberately are *not* labelled with a number: the slot number they carry
 belongs to the screen they came from, so a parked "4" sitting after this
