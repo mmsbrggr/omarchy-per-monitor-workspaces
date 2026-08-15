@@ -64,9 +64,13 @@ BarWidget {
   // when the bindings.lua line is added while the shell is already running.
   // Watch the directory instead — the same trick the bar uses for its own
   // toggle flags — rather than polling for a file that usually never appears.
+  //
+  // Only until it does appear: this is $XDG_RUNTIME_DIR, a busy directory
+  // shared with every socket on the system, and there is one of these per
+  // screen. Once the file is read, stateFile watches it directly.
   FileView {
     path: root.stateDir
-    watchChanges: true
+    watchChanges: root.luaState === null
     printErrors: false
     onFileChanged: stateFile.reload()
   }

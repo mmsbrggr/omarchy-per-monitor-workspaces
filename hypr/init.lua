@@ -41,10 +41,23 @@ local function monitor_key(monitor)
   return description
 end
 
+-- The naming scheme, in one place. Everything that builds or recognises a
+-- workspace name goes through these, so the scheme cannot drift between the
+-- keybindings, the cycle ring and the screen-adoption pass.
+local function slot_name(key, slot)
+  return key .. ":" .. slot
+end
+
+local function slot_names(key)
+  local names = {}
+  for slot = 1, COUNT do names[slot] = slot_name(key, slot) end
+  return names
+end
+
 local function slot_selector(slot)
   local monitor = hl.get_active_monitor()
   if not monitor then return nil end
-  return "name:" .. monitor_key(monitor) .. ":" .. tostring(slot)
+  return "name:" .. slot_name(monitor_key(monitor), slot)
 end
 
 local function focus_slot(slot)
@@ -81,13 +94,9 @@ local function monitor_ring()
   local monitor = hl.get_active_monitor()
   if not monitor then return {}, nil end
 
-  local key = monitor_key(monitor)
-  local ring, own = {}, {}
-  for slot = 1, COUNT do
-    local name = key .. ":" .. tostring(slot)
-    own[name] = true
-    ring[#ring + 1] = name
-  end
+  local ring = slot_names(monitor_key(monitor))
+  local own = {}
+  for _, name in ipairs(ring) do own[name] = true end
 
   local parked = {}
   for _, workspace in ipairs(hl.get_workspaces()) do
@@ -169,58 +178,29 @@ local function focus_monitor(selector)
   end
 end
 
--- Into whatever that screen is currently showing, which is where you were
--- looking when you decided to throw the window over there.
-local function send_window(selector)
-  return function()
-    local monitor = target_monitor(selector)
-    if not monitor or not monitor.active_workspace then return end
-    hl.dispatch(hl.dsp.window.move({
-      workspace = "name:" .. monitor.active_workspace.name,
-      follow = true,
-    }))
-  end
-end
-
-local function window_addresses(workspace)
-  local addresses = {}
-  for _, window in ipairs(workspace:get_windows()) do
-    addresses[#addresses + 1] = window.address
-  end
-  return addresses
-end
-
-local function move_all(addresses, workspace)
-  local selector = "name:" .. workspace.name
-  for _, address in ipairs(addresses) do
-    hl.dispatch(hl.dsp.window.move({
-      workspace = selector,
-      window = "address:" .. address,
-      follow = false,
-    }))
-  end
-end
-
 local function send_workspace(selector)
   return function()
     local monitor, _, from, to = active_workspaces(selector)
     if not monitor then return end
 
-    local active = hl.get_active_window()
-    local moving = window_addresses(from)
-    move_all(moving, to)
+    -- Snapshot the addresses first: each move mutates the list we are reading.
+    local moving = {}
+    for _, window in ipairs(from:get_windows()) do moving[#moving + 1] = window.address end
 
-    -- Follow what you sent, and land on the window you were already using
-    -- rather than on whatever happened to be sitting on that screen.
     if #moving == 0 then
       hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
       return
     end
 
-    local landed = moving[1]
+    local active = hl.get_active_window()
+    local target, landed = "name:" .. to.name, moving[1]
     for _, address in ipairs(moving) do
-      if active and address == active.address then landed = address break end
+      hl.dispatch(hl.dsp.window.move({ workspace = target, window = "address:" .. address, follow = false }))
+      if active and address == active.address then landed = address end
     end
+
+    -- Follow what you sent, landing on the window you were already using rather
+    -- than on whatever happened to be sitting on that screen.
     focus_window(landed)
   end
 end
@@ -267,10 +247,12 @@ for _, direction in ipairs(DIRECTIONS) do
     "Focus " .. direction.label .. " monitor",
     focus_monitor(direction.selector)
   )
+  -- Hyprland's own "move to monitor" already lands on whatever that screen is
+  -- showing, which is where you were looking when you threw the window at it.
   o.bind(
     "SUPER + CTRL + SHIFT + " .. direction.key,
     "Move window to " .. direction.label .. " monitor",
-    send_window(direction.selector)
+    hl.dsp.window.move({ monitor = direction.selector, follow = true })
   )
 
   hl.unbind("SUPER + SHIFT + ALT + " .. direction.key)
@@ -296,7 +278,10 @@ for number = 1, 10 do
   hl.unbind("SUPER + SHIFT + ALT + " .. key)
 end
 
-for slot = 1, COUNT do
+-- Ten digits is all there is, whatever COUNT says. Slots past the tenth still
+-- exist and stay reachable by TAB, scroll and click -- they just have no key,
+-- because there is not one to give them.
+for slot = 1, math.min(COUNT, 10) do
   local key = "code:" .. tostring(slot + 9)
   o.bind("SUPER + " .. key, "Switch to workspace " .. slot, focus_slot(slot))
   o.bind("SUPER + SHIFT + " .. key, "Move window to workspace " .. slot, move_to_slot(slot, true))
@@ -334,63 +319,41 @@ o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "pre
 -- Prefer a slot that already exists: while the screen was away its workspaces
 -- were parked on a surviving one, so focusing a parked slot here is also what
 -- brings it home, windows and all.
-local function find_workspace(name)
-  for _, workspace in ipairs(hl.get_workspaces()) do
-    if workspace.name == name then return workspace end
-  end
-  return nil
-end
-
--- The slot this screen should be showing, plus the live workspace behind it if
--- there is one. Preferring a slot that already exists is what brings a screen's
--- workspaces home instead of stranding them.
-local function home_slot(monitor)
-  local key = monitor_key(monitor)
-
-  for slot = 1, COUNT do
-    local name = key .. ":" .. slot
-    local workspace = find_workspace(name)
-    if workspace then return name, workspace end
-  end
-
-  return key .. ":1", nil
-end
-
-local function shows_own_slot(monitor)
+-- Put a screen on one of its own slots, preferring one that already exists --
+-- while the screen was away its workspaces were parked on a survivor, so
+-- preferring the live one is also what brings it home, windows and all.
+-- Returns whether anything was actually moved.
+local function adopt_monitor(monitor, key)
+  local names = slot_names(key)
   local active = monitor.active_workspace
-  if not active then return false end
 
-  local key = monitor_key(monitor)
-  for slot = 1, COUNT do
-    if active.name == key .. ":" .. slot then return true end
-  end
-
-  return false
-end
-
-local function adopt_monitor(monitor)
   -- Any of its own slots will do. Only a screen showing something outside its
   -- set gets moved, so this never drags you off a slot you chose.
-  if shows_own_slot(monitor) then return end
+  for _, name in ipairs(names) do
+    if active and active.name == name then return false end
+  end
 
-  local name, workspace = home_slot(monitor)
+  local target, workspace = names[1], nil
+  for _, name in ipairs(names) do
+    local existing = hl.get_workspace("name:" .. name)
+    if existing then target, workspace = name, existing break end
+  end
 
   -- Alive but on the wrong screen: parked on a survivor while this one was
   -- away, or left behind on the connector this panel used to sit on. Bring the
   -- workspace across first -- focusing it would send us to where it is instead
   -- of bringing it to where it belongs.
   if workspace and workspace.monitor and workspace.monitor.id ~= monitor.id then
-    hl.dispatch(hl.dsp.workspace.move({ workspace = "name:" .. name, monitor = monitor.name }))
+    hl.dispatch(hl.dsp.workspace.move({ workspace = "name:" .. target, monitor = monitor.name }))
   end
 
   -- Then put it on screen. A move relocates a workspace without displaying it,
   -- and a slot that does not exist yet has to be focused into being -- Hyprland
   -- creates a missing workspace on whichever monitor is focused, so focus has
-  -- to travel there and come straight back.
-  local origin = hl.get_active_monitor()
+  -- to travel there.
   hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
-  hl.dispatch(hl.dsp.focus({ workspace = "name:" .. name }))
-  if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end
+  hl.dispatch(hl.dsp.focus({ workspace = "name:" .. target }))
+  return true
 end
 
 -- Two things go wrong when a screen comes back. It lands on whatever Hyprland
@@ -400,29 +363,31 @@ end
 -- rather than per panel. Both read the same way from here -- a screen showing
 -- something outside its own set -- and both are fixed the same way.
 local function adopt_all()
+  local origin = hl.get_active_monitor()
+  local moved = false
+
   for _, monitor in ipairs(hl.get_monitors()) do
-    adopt_monitor(monitor)
+    if adopt_monitor(monitor, monitor_key(monitor)) then moved = true end
   end
+
+  -- Hand focus back once for the whole pass rather than after each screen: a
+  -- dock brings several up at once, and every focus change wakes every bar.
+  if moved and origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end
 end
 
 -- Deferred because a reload that got us here may still be applying the monitor
--- rules that say where these screens are.
-hl.timer(adopt_all, { timeout = 500, type = "oneshot" })
+-- rules that say where these screens are, and a dock brings several up at once.
+local function reconcile()
+  hl.timer(adopt_all, { timeout = 500, type = "oneshot" })
+end
 
-
--- The one that does the work on a dock: it fires for a reconnected connector
--- as well as a brand new output. The load-time pass above is the safety net --
--- it catches a session that is already wrong, which is what a fresh login looks
--- like, and any dock where this never ran.
-hl.on("monitor.added", function(monitor)
-  if not monitor then return end
-
-  local name = monitor.name
-  hl.timer(function()
-    local current = hl.get_monitor(name)
-    if current then adopt_monitor(current) end
-  end, { timeout = 500, type = "oneshot" })
-end)
+-- Two triggers for two different facts. monitor.added is "a screen appeared",
+-- and it is the one that does the work on a dock -- it fires for a reconnected
+-- connector, not just a brand new output. Running on load covers "this file
+-- just loaded, reconcile whatever is true now": a fresh login, or a session
+-- that was already wrong when the line was first added to bindings.lua.
+reconcile()
+hl.on("monitor.added", reconcile)
 
 -- Tell the bar widget that this file is loaded, and how many slots it bound.
 -- The widget reads the count from here rather than carrying its own, so the

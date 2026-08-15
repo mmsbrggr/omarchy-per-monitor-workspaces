@@ -187,7 +187,9 @@ sitting on something outside that screen's own set after every dock. The plugin
 sorts both out.
 
 A screen is only ever moved when it is showing something outside its own set,
-so this never takes you off a slot you picked yourself.
+so this never takes you off one of its own slots. It can take you off a parked
+workspace you had reached with `SUPER + TAB`, since from the outside that looks
+exactly like a screen that came back wrong.
 
 They deliberately are *not* labelled with a number: the slot number they carry
 belongs to the screen they came from, so a parked "4" sitting after this
