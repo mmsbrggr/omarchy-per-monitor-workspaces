@@ -355,47 +355,27 @@ local function adopt_monitor(monitor)
   if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end
 end
 
--- Docking is a config reload, and that is the hook.
---
--- monitor.added never reaches a Lua handler for a connector that comes back.
--- hyprdynamicmonitors, which Omarchy ships, answers the layout change by
--- running `hyprctl reload`, and that reload re-registers every handler about a
--- second after the event it was waiting for has already gone by. Nothing to
--- subscribe to -- but the reload re-runs this file once the new layout has
--- settled, which is exactly the moment the screens need sorting out.
---
--- Two things need sorting. A screen coming back lands on whatever Hyprland
+-- Two things go wrong when a screen comes back. It lands on whatever Hyprland
 -- hands it, which is a global numbered workspace; and a dock can put the same
--- panel on a different connector than last time, leaving two screens showing
--- each other's workspaces. Both read as a screen displaying something outside
--- its own set, and both are fixed the same way.
+-- panel on a different connector than last time, which leaves the two screens
+-- showing each other's workspaces, because Hyprland restores them per connector
+-- rather than per panel. Both read the same way from here -- a screen showing
+-- something outside its own set -- and both are fixed the same way.
 local function adopt_all()
   for _, monitor in ipairs(hl.get_monitors()) do
     adopt_monitor(monitor)
   end
 end
 
--- Deferred because the reload that got us here is still applying the monitor
+-- Deferred because a reload that got us here may still be applying the monitor
 -- rules that say where these screens are.
 hl.timer(adopt_all, { timeout = 500, type = "oneshot" })
 
--- The bar widget's way in, since neither hook above is guaranteed. The reload
--- one needs something to be issuing `hyprctl reload` on a dock -- true with
--- hyprdynamicmonitors, which is not part of Omarchy -- and monitor.added does
--- not arrive for a connector that comes back.
---
--- Hyprland's IPC socket does announce a returning screen, reliably; Quickshell
--- is built on that socket, so the widget hears it when this file cannot. It
--- calls in here rather than acting itself, so the policy stays in one place.
--- Nothing calls it when the widget is not installed, and calling it when this
--- file is not loaded is a no-op, so either half works alone.
-_G.per_monitor_workspaces_adopt = function(name)
-  local monitor = name and hl.get_monitor(name) or nil
-  if monitor then adopt_monitor(monitor) else adopt_all() end
-end
 
--- Still worth listening for, to catch an output that appears without a reload
--- behind it: a virtual display, or a machine with no dynamic-monitor daemon.
+-- The one that does the work on a dock: it fires for a reconnected connector
+-- as well as a brand new output. The load-time pass above is the safety net --
+-- it catches a session that is already wrong, which is what a fresh login looks
+-- like, and any dock where this never ran.
 hl.on("monitor.added", function(monitor)
   if not monitor then return end
 

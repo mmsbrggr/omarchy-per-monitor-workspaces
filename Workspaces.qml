@@ -176,33 +176,6 @@ BarWidget {
 
   readonly property var entries: root.buildEntries()
 
-  // ------------------------------------------------------- monitor changes
-  //
-  // Quickshell rides Hyprland's IPC socket, which does announce a screen that
-  // comes back from a dock — the Lua half never hears about it, so this is the
-  // one signal that reliably arrives. Nudge the keybindings to re-check this
-  // screen whenever the panel behind it changes, then let them decide; the
-  // policy is theirs, and they leave a screen alone unless it is showing a
-  // workspace outside its own set.
-  readonly property string monitorIdentity: root.monitor
-    ? String(root.monitor.name || "") + "|" + String(root.monitor.description || "")
-    : ""
-
-  onMonitorIdentityChanged: adoptDebounce.restart()
-
-  Timer {
-    id: adoptDebounce
-    // Long enough for Hyprland to finish bringing the outputs up, and for a
-    // dock that lights several screens at once to settle.
-    interval: 800
-    onTriggered: {
-      if (!root.monitor || root.prefix === "") return
-      root.runLua("if per_monitor_workspaces_adopt then per_monitor_workspaces_adopt("
-        + root.quoteLua(String(root.monitor.name)) + ") end")
-    }
-  }
-
-
   // ---------------------------------------------------------------- actions
 
   // Hyprland's dispatch evaluates Lua source, so an action that has to happen
