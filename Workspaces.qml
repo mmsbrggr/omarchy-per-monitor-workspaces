@@ -219,10 +219,18 @@ BarWidget {
     onLoadFailed: root.offerDismissed = false
   }
 
+  // Answering on one screen answers for all of them. Add and Not now also
+  // change something every instance watches -- bindings.lua, the dismissal
+  // marker -- but Copy changes nothing shared, so without this the other
+  // screens would sit there still asking a question you already answered.
+  function closeOffer() {
+    root.offerOpen = false
+  }
+
   function dismissOffer() {
     root.offerDismissed = true
-    root.offerOpen = false
     if (root.dismissPath !== "") dismissFile.setText("dismissed\n")
+    root.broadcast("closeOffer")
   }
 
   // Every screen asks, so the answer is wherever you happen to be looking.
@@ -276,12 +284,12 @@ BarWidget {
       + "-- the plugin costs these bindings rather than everything below this line.\n"
       + root.bindingsLine + "\n")
 
-    root.offerOpen = false
+    root.broadcast("closeOffer")
   }
 
   function copyBindingsLine() {
     Util.execDetached("printf %s " + Util.shellQuote(root.bindingsLine) + " | wl-copy")
-    root.offerOpen = false
+    root.broadcast("closeOffer")
   }
 
   property bool offerOpen: false
