@@ -122,8 +122,9 @@ omarchy bar set mmsbrggr.per-monitor-workspaces count 8 --json
 
 That is an ordinary widget setting on your `shell.json` entry, which is where
 Omarchy keeps plugin settings — you can edit it there directly too. The widget
-projects it into `~/.local/state/omarchy/` for the shortcuts to read, so the
-keys and the dots cannot drift apart. Hyprland picks it up on its next reload.
+projects it into `~/.local/state/omarchy/` for the shortcuts to read, and hands
+the running Hyprland the same number, so the keys change along with the dots
+rather than at the next reload.
 
 ### Your own keybindings
 
@@ -143,6 +144,22 @@ o.bind("SUPER + ALT + L", "Screen right", pmw.focus_monitor("r"))
 `focus_slot`, `move_to_slot`, `move_to_slot_silently`, `cycle`, `focus_monitor`,
 `send_window`, `send_workspace`, `swap_workspaces`, plus `count`. Each takes its
 argument and returns a function to bind.
+
+`count` changes while Hyprland runs, whenever you change the setting. Keys that
+depend on how many slots there are go inside `on_count`, which runs immediately
+and again on every change. A shrink arrives the same way as a growth, so drop
+the keys before binding the current set — unbinding a key that is not bound
+costs nothing:
+
+```lua
+pmw.on_count(function(count)
+  for slot = 1, 10 do hl.unbind("SUPER + code:" .. (slot + 9)) end
+
+  for slot = 1, math.min(count, 10) do
+    o.bind("SUPER + code:" .. (slot + 9), "Workspace " .. slot, pmw.focus_slot(slot))
+  end
+end)
+```
 
 ## Unplugging a screen
 

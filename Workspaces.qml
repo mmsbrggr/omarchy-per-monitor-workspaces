@@ -64,7 +64,10 @@ BarWidget {
     // Confirm on the way out rather than on the way in: a setText issued before
     // the view has settled is dropped silently, with neither signal, so the
     // count is only considered published once the write actually lands.
-    onSaved: root.publishedCount = root.slotCount
+    onSaved: {
+      root.publishedCount = root.slotCount
+      root.pushCount()
+    }
     onSaveFailed: publishDefer.restart()
   }
 
@@ -77,6 +80,22 @@ BarWidget {
     configFile.setText("-- Written by the Per-monitor Workspaces bar widget.\n"
       + "-- Derived from its `count` setting in shell.json; edit it there.\n"
       + "return { count = " + root.slotCount + " }\n")
+  }
+
+  // The file above is only read when Hyprland parses its config, so on its own
+  // it would leave the keys at the old count until something reloaded --
+  // the dots would move and SUPER+6 would still do nothing. Hand the running
+  // config the new count as well, the way Omarchy's own workspace-layout toggle
+  // applies a change now and leaves the file for later.
+  //
+  // After the write rather than beside it, so the two halves cannot disagree:
+  // what Hyprland has now is what it will parse next time. A write that never
+  // lands leaves the keys where they were, which is visible, rather than moving
+  // them until the next reload puts them back, which is not. Every bar sends
+  // it, and the Lua side drops an unchanged count.
+  function pushCount() {
+    root.runLua("local pmw = _G.per_monitor_workspaces; "
+      + "if pmw and pmw.set_count then pmw.set_count(" + root.slotCount + ") end")
   }
 
   onSlotCountChanged: publishDefer.restart()

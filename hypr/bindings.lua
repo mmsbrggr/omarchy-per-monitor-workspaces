@@ -8,30 +8,38 @@
 local pmw = _G.per_monitor_workspaces
   or dofile((debug.getinfo(1, "S").source:match("@(.*/)") or "") .. "actions.lua")
 
-local COUNT = pmw.count
+-- The slot keys, rebuilt whenever the count changes. on_count runs this once
+-- now, which is what binds them in the first place, and again on every change
+-- the bar widget pushes in -- so the keys follow the dots without a reload.
+--
+-- Rebuilt rather than adjusted: unbinding a key that is not bound costs
+-- nothing, so dropping all ten and binding the current ones is the same work
+-- whether the count grew, shrank or stayed, and there is one path to be wrong
+-- about instead of three.
+pmw.on_count(function(count)
+  -- Drop all ten of Omarchy's global workspace bindings, not just the first
+  -- count: a leftover SUPER+7 would still jump to another monitor.
+  for number = 1, 10 do
+    local key = "code:" .. tostring(number + 9)
+    hl.unbind("SUPER + " .. key)
+    hl.unbind("SUPER + SHIFT + " .. key)
+    hl.unbind("SUPER + SHIFT + ALT + " .. key)
+  end
 
--- Drop all ten of Omarchy's global workspace bindings, not just the first
--- COUNT: a leftover SUPER+7 would still jump to another monitor.
-for number = 1, 10 do
-  local key = "code:" .. tostring(number + 9)
-  hl.unbind("SUPER + " .. key)
-  hl.unbind("SUPER + SHIFT + " .. key)
-  hl.unbind("SUPER + SHIFT + ALT + " .. key)
-end
-
--- Ten digits is all there is, whatever COUNT says. Slots past the tenth still
--- exist and stay reachable by TAB, scroll and click -- they just have no key,
--- because there is not one to give them.
-for slot = 1, math.min(COUNT, 10) do
-  local key = "code:" .. tostring(slot + 9)
-  o.bind("SUPER + " .. key, "Switch to workspace " .. slot, pmw.focus_slot(slot))
-  o.bind("SUPER + SHIFT + " .. key, "Move window to workspace " .. slot, pmw.move_to_slot(slot))
-  o.bind(
-    "SUPER + SHIFT + ALT + " .. key,
-    "Move window silently to workspace " .. slot,
-    pmw.move_to_slot_silently(slot)
-  )
-end
+  -- Ten digits is all there is, whatever the count says. Slots past the tenth
+  -- still exist and stay reachable by TAB, scroll and click -- they just have
+  -- no key, because there is not one to give them.
+  for slot = 1, math.min(count, 10) do
+    local key = "code:" .. tostring(slot + 9)
+    o.bind("SUPER + " .. key, "Switch to workspace " .. slot, pmw.focus_slot(slot))
+    o.bind("SUPER + SHIFT + " .. key, "Move window to workspace " .. slot, pmw.move_to_slot(slot))
+    o.bind(
+      "SUPER + SHIFT + ALT + " .. key,
+      "Move window silently to workspace " .. slot,
+      pmw.move_to_slot_silently(slot)
+    )
+  end
+end)
 
 -- Omarchy cycles with the e+1/e-1 selectors, which walk workspaces across every
 -- monitor and cannot order named ones anyway. Cycle within this monitor instead.

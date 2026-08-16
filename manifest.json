@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "mmsbrggr.per-monitor-workspaces",
   "name": "Per-monitor Workspaces",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Marcel Moosbrugger",
   "license": "MIT",
   "description": "Independent workspaces per monitor: SUPER+N always means this screen's Nth workspace",

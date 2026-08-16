@@ -13,7 +13,11 @@
 -- Or load hypr/init.lua instead, which binds a full default set for you.
 --
 -- The bar widget is what actually provides per-monitor workspaces; these are
--- the verbs that act on them, and the slot count comes from the widget.
+-- the verbs that act on them, and the slot count comes from the widget -- which
+-- can change it while Hyprland is running. Anything you bind that depends on
+-- how many slots there are goes inside `pmw.on_count(function(count) ... end)`,
+-- which runs now and again on every change; hypr/bindings.lua is the worked
+-- example.
 
 -- The bar widget owns the slot count -- it is a setting on its shell.json
 -- entry, which is where Omarchy keeps plugin settings -- and projects it into
@@ -36,7 +40,49 @@ local function configured_count()
   return ok and type(config) == "table" and tonumber(config.count) or nil
 end
 
-local COUNT = math.max(1, math.floor(configured_count() or 5))
+local function whole_count(value)
+  local number = tonumber(value)
+  return number and math.max(1, math.floor(number)) or nil
+end
+
+-- The public surface, declared here because the count sits on it and can change
+-- while Hyprland is running. The verbs are attached at the bottom.
+--
+-- Read `actions.count` where it is used rather than copying it into an upvalue,
+-- and register with `on_count` for anything that has to be rebuilt when it
+-- moves. The file above is only read at config-parse time; the widget pushes a
+-- later change straight in, so a snapshot goes stale within the session.
+local actions = { count = whole_count(configured_count()) or 5 }
+
+local count_listeners = {}
+
+-- Register something that depends on the count -- the slot keys, above all.
+-- Called once immediately, so the listener is the only place its thing is
+-- built, and one body covers both this parse and every later change.
+function actions.on_count(listener)
+  count_listeners[#count_listeners + 1] = listener
+  listener(actions.count)
+end
+
+-- Called from the bar widget over Hyprland's socket when its `count` setting
+-- changes. Omarchy's own workspace-layout toggle works this way: apply the
+-- change now, and leave the file for the next parse to read. Without it the
+-- dots would move on a setting change and the keys would sit at the old count
+-- until something reloaded Hyprland.
+--
+-- One bar per screen sends it, all with the same number, so an unchanged count
+-- has to cost nothing. `per_monitor_workspaces_count` keeps winning here as it
+-- does above -- an override that only held until the widget's next write would
+-- be worse than one that never took.
+function actions.set_count(value)
+  if _G.per_monitor_workspaces_count then return end
+
+  local count = whole_count(value)
+  if not count or count == actions.count then return end
+
+  actions.count = count
+  for _, listener in ipairs(count_listeners) do listener(count) end
+end
 
 -- Description, not connector name: DP-2/DP-3 can swap on replug, which would
 -- swap two monitors' workspaces along with them.
@@ -112,7 +158,7 @@ local function monitor_ring()
 
   local key = monitor_key(monitor)
   local ring, own = {}, {}
-  for slot = 1, COUNT do
+  for slot = 1, actions.count do
     local name = slot_name(key, slot)
     ring[slot] = name
     own[name] = true
@@ -255,24 +301,22 @@ local function swap_workspaces(selector)
   end
 end
 
--- The public surface. Each entry is a factory: call it with its argument and
--- you get the nullary function that `o.bind` takes as a dispatcher.
-local actions = {
-  count = COUNT,
+-- The verbs, onto the table declared at the top. Each is a factory: call it
+-- with its argument and you get the nullary function that `o.bind` takes as a
+-- dispatcher.
 
-  -- One screen. `slot` is 1..count.
-  focus_slot = focus_slot,
-  move_to_slot = function(slot) return move_to_slot(slot, true) end,
-  move_to_slot_silently = function(slot) return move_to_slot(slot, false) end,
-  cycle = cycle,
+-- One screen. `slot` is 1..count.
+actions.focus_slot = focus_slot
+actions.move_to_slot = function(slot) return move_to_slot(slot, true) end
+actions.move_to_slot_silently = function(slot) return move_to_slot(slot, false) end
+actions.cycle = cycle
 
-  -- Across screens. `selector` is a Hyprland monitor selector -- "l", "r",
-  -- "u", "d" for a direction, or "+1"/"-1" to step.
-  focus_monitor = focus_monitor,
-  send_window = send_window,
-  send_workspace = send_workspace,
-  swap_workspaces = swap_workspaces,
-}
+-- Across screens. `selector` is a Hyprland monitor selector -- "l", "r", "u",
+-- "d" for a direction, or "+1"/"-1" to step.
+actions.focus_monitor = focus_monitor
+actions.send_window = send_window
+actions.send_workspace = send_workspace
+actions.swap_workspaces = swap_workspaces
 
 -- Also global, so hypr/bindings.lua can find it without a path, and so a
 -- user's own config can reach it after hypr/init.lua has run.
