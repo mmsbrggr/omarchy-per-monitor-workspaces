@@ -33,8 +33,22 @@ BarWidget {
   }
 
   readonly property string home: Quickshell.env("HOME") || ""
+
+  // Derived state, not configuration. The count is a setting on this widget's
+  // shell.json entry -- Omarchy keeps every plugin setting inline there and
+  // says so plainly: "there is one user config file", "no separate per-plugin
+  // settings file". This is only a projection of that setting into a form the
+  // Hyprland side can read, so it lives in state, under the plugin id, and
+  // nobody should be editing it.
+  //
+  // A Lua table because that is how Omarchy already hands values to Hyprland
+  // (the current theme is required the same way), which saves the shortcuts
+  // parsing anything. Persistent rather than runtime: Hyprland parses its
+  // config before the shell starts, so a runtime file would not exist yet at
+  // login and the session would open with the wrong number of keys bound.
+  readonly property string stateDir: home ? home + "/.local/state/omarchy" : ""
   readonly property string configPath:
-    home ? home + "/.config/omarchy/per-monitor-workspaces.conf" : ""
+    stateDir ? stateDir + "/" + root.moduleName + ".lua" : ""
 
   // Hoisted the way Tray.qml does, so the popup below is content rather than
   // a wall of `bar ? bar.x : fallback`.
@@ -60,9 +74,9 @@ BarWidget {
 
   function publishCount() {
     if (root.configPath === "" || root.slotCount === root.publishedCount) return
-    configFile.setText("# Written by the Per-monitor Workspaces bar widget.\n"
-      + "# hypr/init.lua reads this to bind the same number of slots.\n"
-      + "count=" + root.slotCount + "\n")
+    configFile.setText("-- Written by the Per-monitor Workspaces bar widget.\n"
+      + "-- Derived from its `count` setting in shell.json; edit it there.\n"
+      + "return { count = " + root.slotCount + " }\n")
   }
 
   onSlotCountChanged: publishDefer.restart()
@@ -205,7 +219,7 @@ BarWidget {
   // Asked once. Someone who declines has declined, and the widget works without
   // the shortcuts -- it just cannot give you keys.
   readonly property string dismissPath:
-    home ? home + "/.local/state/omarchy/per-monitor-workspaces-offer-dismissed" : ""
+    stateDir ? stateDir + "/" + root.moduleName + ".offer-dismissed" : ""
   property bool offerDismissed: true
 
   FileView {

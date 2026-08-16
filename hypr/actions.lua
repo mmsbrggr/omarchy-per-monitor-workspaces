@@ -15,27 +15,25 @@
 -- The bar widget is what actually provides per-monitor workspaces; these are
 -- the verbs that act on them, and the slot count comes from the widget.
 
--- The bar widget owns the slot count -- it is one of its settings -- and writes
--- it here for this file to read. A persistent path rather than a runtime one:
--- Hyprland parses its config before the shell starts, so at login a runtime
--- file would not exist yet and the session would begin with the wrong number of
--- keys bound until something reloaded.
+-- The bar widget owns the slot count -- it is a setting on its shell.json
+-- entry, which is where Omarchy keeps plugin settings -- and projects it into
+-- ~/.local/state/omarchy as a Lua table for this file to read. dofile rather
+-- than require, because Hyprland's reload only clears the require cache for a
+-- few known prefixes and a cached count would go stale.
 --
 -- `per_monitor_workspaces_count` still wins where it is set, for anyone running
--- these bindings without the widget.
+-- these bindings without the widget. Setting both makes the keys and the dots
+-- disagree, and nothing can warn you.
 local function configured_count()
   if _G.per_monitor_workspaces_count then return tonumber(_G.per_monitor_workspaces_count) end
 
   local home = os.getenv("HOME")
   if not home then return nil end
 
-  local file = io.open(home .. "/.config/omarchy/per-monitor-workspaces.conf", "r")
-  if not file then return nil end
+  local ok, config = pcall(dofile,
+    home .. "/.local/state/omarchy/io.github.mmsbrggr.per-monitor-workspaces.lua")
 
-  local text = file:read("a")
-  file:close()
-
-  return tonumber(text:match("count%s*=%s*(%d+)"))
+  return ok and type(config) == "table" and tonumber(config.count) or nil
 end
 
 local COUNT = math.max(1, math.floor(configured_count() or 5))

@@ -120,9 +120,10 @@ Five slots per screen by default:
 omarchy bar set io.github.mmsbrggr.per-monitor-workspaces count 8 --json
 ```
 
-The widget writes that number to `~/.config/omarchy/per-monitor-workspaces.conf`
-and the shortcuts read it from there, so the keys and the dots cannot drift
-apart. Hyprland picks it up on its next reload.
+That is an ordinary widget setting on your `shell.json` entry, which is where
+Omarchy keeps plugin settings — you can edit it there directly too. The widget
+projects it into `~/.local/state/omarchy/` for the shortcuts to read, so the
+keys and the dots cannot drift apart. Hyprland picks it up on its next reload.
 
 ### Your own keybindings
 
