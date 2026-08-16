@@ -65,7 +65,7 @@ previous file is kept as `bindings.lua.bak`.
 By hand, that line is:
 
 ```lua
-pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mmsbrggr.per-monitor-workspaces/hypr/init.lua")
+pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/mmsbrggr.per-monitor-workspaces/hypr/init.lua")
 ```
 
 > Omarchy's plugin installer never runs code from a plugin — it only clones
@@ -117,7 +117,7 @@ rebound for the same reason. Everything else is untouched.
 Five slots per screen by default:
 
 ```sh
-omarchy bar set io.github.mmsbrggr.per-monitor-workspaces count 8 --json
+omarchy bar set mmsbrggr.per-monitor-workspaces count 8 --json
 ```
 
 That is an ordinary widget setting on your `shell.json` entry, which is where
@@ -133,7 +133,7 @@ whatever you like:
 
 ```lua
 local pmw = dofile(os.getenv("HOME") ..
-  "/.config/omarchy/plugins/io.github.mmsbrggr.per-monitor-workspaces/hypr/actions.lua")
+  "/.config/omarchy/plugins/mmsbrggr.per-monitor-workspaces/hypr/actions.lua")
 
 o.bind("SUPER + code:10", "Workspace 1",  pmw.focus_slot(1))
 o.bind("SUPER + TAB",     "Next",         pmw.cycle(1))
@@ -166,7 +166,7 @@ themselves alike; those get the connector appended to tell them apart.
 ## Uninstall
 
 ```sh
-omarchy plugin remove io.github.mmsbrggr.per-monitor-workspaces
+omarchy plugin remove mmsbrggr.per-monitor-workspaces
 ```
 
 Omarchy's built-in workspace widget goes back where this one was. Then remove the

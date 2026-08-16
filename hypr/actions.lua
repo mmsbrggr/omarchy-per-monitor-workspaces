@@ -4,7 +4,7 @@
 -- `o.bind` wants as a dispatcher. Bind them yourself:
 --
 --   local pmw = dofile(os.getenv("HOME") ..
---     "/.config/omarchy/plugins/io.github.mmsbrggr.per-monitor-workspaces/hypr/actions.lua")
+--     "/.config/omarchy/plugins/mmsbrggr.per-monitor-workspaces/hypr/actions.lua")
 --
 --   o.bind("SUPER + code:10", "Workspace 1", pmw.focus_slot(1))
 --   o.bind("SUPER + TAB",     "Next",        pmw.cycle(1))
@@ -31,7 +31,7 @@ local function configured_count()
   if not home then return nil end
 
   local ok, config = pcall(dofile,
-    home .. "/.local/state/omarchy/io.github.mmsbrggr.per-monitor-workspaces.lua")
+    home .. "/.local/state/omarchy/mmsbrggr.per-monitor-workspaces.lua")
 
   return ok and type(config) == "table" and tonumber(config.count) or nil
 end

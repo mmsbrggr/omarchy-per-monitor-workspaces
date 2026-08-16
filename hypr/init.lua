@@ -2,7 +2,7 @@
 --
 -- This is the convenience entry point, and what the README tells you to load:
 --
---   pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mmsbrggr.per-monitor-workspaces/hypr/init.lua")
+--   pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/mmsbrggr.per-monitor-workspaces/hypr/init.lua")
 --
 -- It is two halves, and you can take just the first. hypr/actions.lua defines
 -- what can be done and binds nothing; hypr/bindings.lua is one opinionated set

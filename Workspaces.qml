@@ -13,7 +13,7 @@ import qs.Ui
 // per-monitor workspaces are named, so their ids are negative.
 BarWidget {
   id: root
-  moduleName: "io.github.mmsbrggr.per-monitor-workspaces"
+  moduleName: "mmsbrggr.per-monitor-workspaces"
 
   readonly property string parkedGlyph: "\uF108"
   readonly property string focusedGlyph: "\uDB85\uDCFB"
