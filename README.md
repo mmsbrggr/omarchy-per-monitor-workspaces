@@ -6,85 +6,70 @@ workspace 3".
 
 ![Two bars at the same moment: one screen sits on workspace 1, the laptop on workspace 4](docs/bar.png)
 
-If you have used dwm, awesome, or i3 with per-output workspaces, this is that,
-for Omarchy.
-
 ## Why
 
 Omarchy binds `SUPER+1..0` to ten global workspaces shared by every monitor. On
-a laptop alone that is fine. Plug in a second screen and it starts to grate:
+a laptop alone that is fine. Plug in a second screen and it grates: you press
+`SUPER+1` on your big screen and focus jumps to the laptop, because that is
+where workspace 1 happens to live. The screen you were looking at does nothing.
 
-- You are working on your big screen, press `SUPER+1`, and focus silently jumps
-  to the laptop — because that is where workspace 1 happens to live.
-- The screen you were looking at appears to do nothing at all.
-- You end up mentally tracking which numbers "belong" to which display.
+With this plugin each monitor gets its own set, the way dwm, awesome and i3 do
+it. Nothing is hardcoded — no monitor names, no workspace rules. A screen gets
+its own set the first time you press a slot key on it.
 
-With this plugin each monitor gets its own independent set. `SUPER+1` on your
-external screen goes to *that screen's* first workspace, and the laptop stays
-exactly where it was.
+## How it works, honestly
 
-Nothing is hardcoded — no monitor names, no workspace rules, no ids in your
-config. A monitor gets its own set the first time you press a slot key on it,
-whether you run one screen or five, docked or not, including screens the config
-has never seen before.
+**Hyprland has no per-monitor workspaces.** Its workspaces are global: one flat
+list, any of which can be shown on any monitor. There is no lower level to
+configure — a native version of this would have to come from Hyprland itself.
+
+So this plugin builds the idea on top of what Hyprland does offer: *named*
+workspaces. Each screen gets workspaces named after it — `<screen>:1`,
+`<screen>:2` — and `SUPER+1` resolves to a name at the moment you press it,
+from whichever screen has focus. You never see those names; the bar labels
+everything by position.
+
+That is the whole trick, and it explains the edges: a workspace still belongs to
+Hyprland's one global list, so unplugging a screen leaves its workspaces parked
+on a surviving one, and a returning screen has to be put back on its own. Both
+are handled — see [Unplugging a screen](#unplugging-a-screen).
 
 ## Requirements
 
 - Omarchy 4 (Quattro), using the built-in bar
-- Hyprland with the Lua config (developed against 0.56.2)
+- Hyprland with the Lua config
 
 ## Install
-
-It comes in two halves — a bar widget and a set of keybindings. You want both.
-
-**1. The widget**
 
 ```sh
 omarchy plugin add https://github.com/mmsbrggr/omarchy-per-monitor-workspaces.git --enable
 ```
 
-It drops into the exact bar position Omarchy's built-in workspace widget was
-using, and hands that spot back if you ever disable it.
+That is the whole feature: per-monitor workspaces, the bar indicators, and the
+screen handling when you dock. It takes the built-in workspace widget's place in
+your bar, and hands it back if you ever remove the plugin.
 
-**2. The keyboard shortcuts** *(optional, strongly recommended)*
+### Keyboard shortcuts
 
-Append one line to `~/.config/hypr/bindings.lua`:
+Optional, and strongly recommended — without them `SUPER+N` keeps switching
+Omarchy's global workspaces, which is not what the dots show. The first time the
+widget runs without them, it offers:
+
+![A small popup offering to add keyboard shortcuts, with Add, Copy and Not now](docs/offer.png)
+
+**Add shortcuts** appends one line to `~/.config/hypr/bindings.lua`, **Copy
+line** hands it to you to place yourself, **Not now** declines and is not asked
+again. Nothing is written until you choose, the write only appends, and your
+previous file is kept as `bindings.lua.bak`.
+
+By hand, that line is:
 
 ```lua
 pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mmsbrggr.per-monitor-workspaces/hypr/init.lua")
 ```
 
-Save, and Hyprland reloads on its own. That's it.
-
-The widget alone already gives you per-monitor workspaces: the dots are real,
-you can click them, and they sort themselves out when you dock. This line adds
-the keyboard to that — `SUPER+1..N` for the screen you are looking at, cycling,
-and moving windows between screens. Without it `SUPER+N` keeps switching
-Omarchy's global workspaces, which is not what the dots show.
-
-> **Why the manual step?** Omarchy's plugin installer deliberately never runs
-> code from a plugin — it only clones files — so a plugin cannot add keybindings
-> to your config on its own. Better that than an installer that executes
-> whatever it just downloaded.
-
-You do not have to do it by hand. The first time the widget runs without the
-line, it offers:
-
-![A popup offering to add the shortcut line, with Add / Copy / Not now](docs/offer.png)
-
-**Add it for me** appends the line, **Copy the line** hands it to you to place
-yourself, **Not now** declines and is never asked again. Nothing is written
-until you choose, the write only appends, and the previous file is kept as
-`bindings.lua.bak`.
-
-<details>
-<summary>Why <code>pcall</code> and <code>dofile</code>?</summary>
-
-`dofile` rather than `require`, because plugin directories are named
-`<author>.<name>` and the dot breaks Lua's module paths. Wrapped in `pcall` so
-that removing the plugin later costs you per-monitor workspaces rather than
-everything after that line in your config.
-</details>
+> Omarchy's plugin installer never runs code from a plugin — it only clones
+> files — so a plugin cannot add keybindings to your config on its own.
 
 ## Keys
 
@@ -99,117 +84,83 @@ everything after that line in your config.
 | `SUPER + scroll` | Same, with the wheel |
 | `SUPER + CTRL + TAB` | Back to this screen's previous workspace |
 
-Cycling walks the slots in order, `1 → 2 → … → 5 → 1`, whether or not you have
-used a slot yet. Hyprland deletes a workspace the moment its last window closes,
-so a cycle over only the live ones would usually be a cycle of one.
+Cycling walks the slots in order whether or not you have used one yet — Hyprland
+deletes a workspace as soon as its last window closes, so a cycle over only the
+live ones would usually be a cycle of one.
 
 ### Across screens
 
 | Key | Does |
 | --- | --- |
 | `SUPER + CTRL + ALT + ←↑↓→` | Focus the screen in that direction |
-| `SUPER + CTRL + SHIFT + ←↑↓→` | Send the window to that screen and follow |
-| `SUPER + SHIFT + ALT + ←↑↓→` | Send everything on this workspace to that screen |
+| `SUPER + CTRL + SHIFT + ←↑↓→` | Send the window there and follow |
+| `SUPER + SHIFT + ALT + ←↑↓→` | Send everything on this workspace there |
 | `SUPER + CTRL + ALT + SHIFT + ←↑↓→` | Swap this screen's windows with that screen's |
 
-Directions are physical — you already know which screen is on your left — so
-there are no monitor numbers to memorise and none cluttering the bar.
-
-These move **windows, not workspaces**: every workspace stays on the screen it
-belongs to, and what travels is what is on it. Windows land on whatever the
-target screen is currently showing.
-
-Focus follows your windows: after any of these you are on the screen they went
-to, on one of the windows that travelled, rather than on whatever happened to be
-sitting there already.
-
-Swapping keeps both screens' tiling exactly as it was — a master-and-stack
-arrives as a master-and-stack. It trades the two workspaces between the screens
-and then trades their names back, so nothing is ever re-tiled and every
-workspace still belongs to the screen it is named for. Sending, by contrast,
-merges into whatever is already on the target, so the arriving windows are
-tiled in alongside it.
+Directions are physical, so there are no monitor numbers to memorise. These move
+**windows, not workspaces** — every workspace stays on the screen it belongs to,
+and focus follows what you sent. Swapping keeps both screens' tiling intact.
 
 ### With the mouse
 
-On the workspace dots: **left-click** to focus, **right-click** to send the
-focused window there without following it, **scroll** to cycle. Each bar acts on
-its own screen, so scrolling the second monitor's bar moves that screen rather
-than the one you happen to be focused on.
+On the dots: **left-click** to focus, **right-click** to send the focused window
+there, **scroll** to cycle. Each bar acts on its own screen.
 
-### What this changes in your Omarchy defaults
+### What this changes in Omarchy's defaults
 
-`SUPER + 6..0` are removed — with per-monitor slots they could only ever pull
-you to another screen. `SUPER + CTRL + TAB` and `SUPER + SHIFT + ALT + ←↑↓→` are
-rebound for the same reason: stock, both can drag you to a different display.
-
-Everything else is untouched — the scratchpad, window tiling and resizing, the
-bar panels on `SUPER + CTRL + 1..9`, and `CTRL + ALT + TAB` for cycling monitors.
+`SUPER + 6..0` are removed — with per-monitor slots they could only pull you to
+another screen. `SUPER + CTRL + TAB` and `SUPER + SHIFT + ALT + ←↑↓→` are
+rebound for the same reason. Everything else is untouched.
 
 ## Configuration
 
-Five slots per screen by default. It is a widget setting, so it lives in one
-place:
+Five slots per screen by default:
 
 ```sh
 omarchy bar set io.github.mmsbrggr.per-monitor-workspaces count 8 --json
 ```
 
-(`--json` matters — without it the value is stored as a string.) The widget
-writes the number to `~/.config/omarchy/per-monitor-workspaces.conf`, and the
-shortcuts read it from there, so the keys and the dots cannot drift apart.
-Hyprland picks up the new count on its next reload.
+The widget writes that number to `~/.config/omarchy/per-monitor-workspaces.conf`
+and the shortcuts read it from there, so the keys and the dots cannot drift
+apart. Hyprland picks it up on its next reload.
 
-If you run the shortcuts without the widget, set `per_monitor_workspaces_count`
-above the `pcall(dofile, ...)` line instead. It overrides the file — so if you
-set both, the bar will keep drawing its own number and the keys will not match.
+### Your own keybindings
 
-## Good to know
+The shortcuts are one opinionated arrangement; the actions underneath are the
+part that matters. Load `hypr/actions.lua` instead of `hypr/init.lua` and bind
+whatever you like:
 
-### Unplugging a screen
+```lua
+local pmw = dofile(os.getenv("HOME") ..
+  "/.config/omarchy/plugins/io.github.mmsbrggr.per-monitor-workspaces/hypr/actions.lua")
 
-Hyprland parks a disconnected monitor's workspaces on a surviving screen. They
-keep their own identity, and the bar shows them after your numbered slots as a
-display glyph:
+o.bind("SUPER + code:10", "Workspace 1",  pmw.focus_slot(1))
+o.bind("SUPER + TAB",     "Next",         pmw.cycle(1))
+o.bind("SUPER + ALT + L", "Screen right", pmw.focus_monitor("r"))
+```
+
+`focus_slot`, `move_to_slot`, `move_to_slot_silently`, `cycle`, `focus_monitor`,
+`send_window`, `send_workspace`, `swap_workspaces`, plus `count`. Each takes its
+argument and returns a function to bind.
+
+## Unplugging a screen
+
+Hyprland parks a disconnected screen's workspaces on a surviving one. The bar
+shows them after your numbered slots, as a display glyph rather than a number —
+the number they carry belongs to the screen they came from, and printing it
+would put a second "4" after this screen's "5". Hover to see where it came from,
+and `SUPER + TAB` reaches them, so nothing is stranded.
 
 ![The bar showing workspaces 1 to 5 followed by an orange display icon](docs/parked.png)
 
-Hover one to see which screen and slot it came from. `SUPER + TAB` reaches them
-too, so nothing you had open is stranded.
+Plug the screen back in and its workspaces come home with their windows. Left to
+itself Hyprland hands a returning screen a fresh global workspace, and a dock can
+put the same panel on a different connector than last time, which leaves two
+screens showing each other's workspaces. The widget sorts both out.
 
-Plug the screen back in and its workspaces come home with their windows, on the
-screen they belong to. Left to itself Hyprland hands a returning screen a fresh
-global numbered workspace, and a dock can also put the same panel on a
-different connector than last time — which makes two screens show each other's
-workspaces, since Hyprland restores them per connector. Either way you would be
-sitting on something outside that screen's own set after every dock. The widget
-sorts both out — it rides Hyprland's IPC socket, which announces a returning
-screen reliably, and each bar minds its own screen.
-
-A screen is only ever moved when it is showing something outside its own set,
-so this never takes you off one of its own slots. It can take you off a parked
-workspace you had reached with `SUPER + TAB`, since from the outside that looks
-exactly like a screen that came back wrong.
-
-They deliberately are *not* labelled with a number: the slot number they carry
-belongs to the screen they came from, so a parked "4" sitting after this
-screen's "5" would read as a broken sequence. Any stray global workspace that
-something else created on the screen shows up the same way.
-
-### How screens are identified
-
-Workspaces are named `<screen>:<slot>` behind the scenes, and the target is
-worked out the moment you press the key, from whichever monitor is focused. You
-never see those names — the bar labels everything by position.
-
-Screens are keyed by their description rather than their connector, because
-`DP-2` and `DP-3` can swap when you replug, and that would swap two monitors'
-workspaces along with them.
-
-The one exception: two panels of the *same model* that report no serial number
-describe themselves identically. Those get the connector name appended so they
-cannot end up sharing a single set. Only the ambiguous ones pay that price, so a
-screen that describes itself uniquely keeps a name that survives a replug.
+Screens are identified by description rather than connector, because `DP-2` and
+`DP-3` can swap on replug. Two identical panels that report no serial describe
+themselves alike; those get the connector appended to tell them apart.
 
 ## Uninstall
 
@@ -217,8 +168,8 @@ screen that describes itself uniquely keeps a name that survives a replug.
 omarchy plugin remove io.github.mmsbrggr.per-monitor-workspaces
 ```
 
-That puts Omarchy's built-in workspace widget back where this one was sitting.
-Then remove the `pcall(dofile, ...)` line from `~/.config/hypr/bindings.lua`.
+Omarchy's built-in workspace widget goes back where this one was. Then remove the
+`pcall(dofile, ...)` line from `~/.config/hypr/bindings.lua`.
 
 ## License
 

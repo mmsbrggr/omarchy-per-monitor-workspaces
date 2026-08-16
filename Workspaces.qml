@@ -212,7 +212,9 @@ BarWidget {
     id: dismissFile
     path: root.dismissPath
     atomicWrites: true
+    watchChanges: true
     printErrors: false
+    onFileChanged: reload()
     onLoaded: root.offerDismissed = true
     onLoadFailed: root.offerDismissed = false
   }
@@ -223,18 +225,10 @@ BarWidget {
     if (root.dismissPath !== "") dismissFile.setText("dismissed\n")
   }
 
-  // Only one bar asks, not one per screen. Elected from the host's own list of
-  // live instances rather than from whichever screen has focus: focus moves
-  // constantly, so gating on it makes the outcome depend on where the pointer
-  // happens to be a second after the bars load.
-  readonly property bool electedToAsk: {
-    if (!root.bar || typeof root.bar.moduleWidgets !== "function") return true
-    var instances = root.bar.moduleWidgets(root.moduleName)
-    return instances.length === 0 || instances[0] === root
-  }
-
-  readonly property bool showOffer:
-    !root.bindingsLinePresent && !root.offerDismissed && root.electedToAsk
+  // Every screen asks, so the answer is wherever you happen to be looking.
+  // Answering on one settles all of them: the dismissal file and bindings.lua
+  // are both watched, so the other bars close themselves.
+  readonly property bool showOffer: !root.bindingsLinePresent && !root.offerDismissed
 
   FileView {
     id: bindingsFile
@@ -502,99 +496,134 @@ BarWidget {
     }
   }
 
+  // A keycap, because the thing being offered is keys. This is the one piece
+  // of decoration in the card; everything around it stays quiet.
+  component Keycap: Rectangle {
+    property alias label: keyLabel.text
+
+    implicitWidth: keyLabel.implicitWidth + Style.space(16)
+    implicitHeight: keyLabel.implicitHeight + Style.space(10)
+    radius: Math.max(3, Style.cornerRadius)
+    color: Util.alpha(root.foreground, 0.06)
+    border.width: 1
+    border.color: Util.alpha(root.foreground, 0.28)
+
+    Text {
+      id: keyLabel
+      anchors.centerIn: parent
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: true
+    }
+  }
+
   PopupCard {
     id: offerPopup
     anchorItem: root
     bar: root.bar
     owner: root
+    // Passive: no focus grab, so clicking the desktop cannot dismiss this by
+    // accident. It closes on an answer, and only on an answer.
+    triggerMode: "hover"
     open: root.offerOpen && root.showOffer
-    contentWidth: offerPopup.fittedContentWidth(Style.space(380))
+    contentWidth: offerPopup.fittedContentWidth(Style.space(400))
     contentHeight: offerPopup.fittedContentHeight(offerColumn.implicitHeight)
 
     Column {
       id: offerColumn
       anchors.fill: parent
-      spacing: Style.space(8)
+      spacing: Style.space(14)
 
       Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        color: root.foreground
+        text: "KEYBOARD SHORTCUTS"
+        color: Util.alpha(root.foreground, 0.45)
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        text: "Per-monitor workspaces are running. Adding one line to your "
-          + "Hyprland config gives them keyboard shortcuts as well — SUPER+1..N "
-          + "for this screen's workspaces, cycling, and moving windows between "
-          + "screens. Strongly recommended: without it SUPER+N still switches "
-          + "Omarchy's global workspaces, which is not what these dots show."
+        font.pixelSize: Style.font.caption
+        font.letterSpacing: 1.6
       }
 
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        opacity: 0.7
-        text: "Appends to " + root.bindingsPath + ":"
+      Row {
+        spacing: Style.space(6)
+
+        Keycap { label: "SUPER" }
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: "+"
+          color: Util.alpha(root.foreground, 0.45)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+        Keycap { label: "1" }
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          leftPadding: Style.space(6)
+          text: "this screen's workspace 1"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
       }
 
-      Text {
+      Column {
         width: parent.width
-        wrapMode: Text.WrapAnywhere
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        text: root.bindingsLine
+        spacing: Style.space(4)
+
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: "Also cycling, and moving windows between screens."
+          color: Util.alpha(root.foreground, 0.6)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Text {
+          width: parent.width
+          elide: Text.ElideMiddle
+          text: "Adds one line to ~/.config/hypr/bindings.lua"
+          color: Util.alpha(root.foreground, 0.4)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
 
       Text {
         width: parent.width
         wrapMode: Text.WordWrap
         visible: root.installError !== ""
+        text: root.installError
         color: root.urgent
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
-        text: root.installError
       }
 
       Row {
-        spacing: Style.space(8)
+        spacing: Style.space(4)
 
         Button {
-          text: "Add it for me"
+          text: "Add shortcuts"
           bordered: true
           foreground: root.foreground
+          accent: root.urgent
           fontFamily: root.fontFamily
+          tooltipText: root.bindingsLine
           onClicked: root.installBindings()
         }
 
         Button {
-          text: "Copy the line"
-          bordered: true
-          foreground: root.foreground
+          text: "Copy line"
+          foreground: Util.alpha(root.foreground, 0.65)
           fontFamily: root.fontFamily
           onClicked: root.copyBindingsLine()
         }
 
         Button {
           text: "Not now"
-          bordered: true
-          foreground: root.foreground
+          foreground: Util.alpha(root.foreground, 0.65)
           fontFamily: root.fontFamily
           onClicked: root.dismissOffer()
         }
-      }
-
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        opacity: 0.7
-        text: "Hyprland reloads on save, so the shortcuts work straight away. The "
-          + "previous file is kept as bindings.lua.bak. This is only asked once."
       }
     }
   }
