@@ -32,10 +32,15 @@ BarWidget {
     return count > 0 ? Math.max(1, Math.floor(count)) : 5
   }
 
-  readonly property string configPath: {
-    var home = Quickshell.env("HOME")
-    return home ? home + "/.config/omarchy/per-monitor-workspaces.conf" : ""
-  }
+  readonly property string home: Quickshell.env("HOME") || ""
+  readonly property string configPath:
+    home ? home + "/.config/omarchy/per-monitor-workspaces.conf" : ""
+
+  // Hoisted the way Tray.qml does, so the popup below is content rather than
+  // a wall of `bar ? bar.x : fallback`.
+  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   FileView {
     id: configFile
@@ -49,8 +54,8 @@ BarWidget {
     onSaveFailed: publishDefer.restart()
   }
 
-  // Rewritten only on a real change, so an ordinary shell restart does not
-  // churn a file Hyprland only reads at parse time anyway.
+  // Written once per shell session, and again whenever the setting changes.
+  // Confirmed on the way out rather than assumed on the way in.
   property int publishedCount: 0
 
   function publishCount() {
@@ -170,14 +175,7 @@ BarWidget {
   // line instead, on a click. The click is the consent: the popup shows the
   // exact text and the exact file before anything is written, and the write
   // only ever appends.
-  readonly property string bindingsPath: {
-    var home = Quickshell.env("HOME")
-    return home ? home + "/.config/hypr/bindings.lua" : ""
-  }
-  readonly property string pluginDir: {
-    var home = Quickshell.env("HOME")
-    return home ? home + "/.config/omarchy/plugins/" + root.moduleName : ""
-  }
+  readonly property string bindingsPath: home ? home + "/.config/hypr/bindings.lua" : ""
   readonly property string bindingsLine:
     'pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/' + root.moduleName + '/hypr/init.lua")'
 
@@ -206,10 +204,8 @@ BarWidget {
 
   // Asked once. Someone who declines has declined, and the widget works without
   // the shortcuts -- it just cannot give you keys.
-  readonly property string dismissPath: {
-    var home = Quickshell.env("HOME")
-    return home ? home + "/.local/state/omarchy/per-monitor-workspaces-offer-dismissed" : ""
-  }
+  readonly property string dismissPath:
+    home ? home + "/.local/state/omarchy/per-monitor-workspaces-offer-dismissed" : ""
   property bool offerDismissed: true
 
   FileView {
@@ -227,9 +223,18 @@ BarWidget {
     if (root.dismissPath !== "") dismissFile.setText("dismissed\n")
   }
 
-  // Only one bar asks, not one per screen.
-  readonly property bool showOffer: !root.bindingsLinePresent && !root.offerDismissed
-    && root.monitor !== null && Hyprland.focusedMonitor === root.monitor
+  // Only one bar asks, not one per screen. Elected from the host's own list of
+  // live instances rather than from whichever screen has focus: focus moves
+  // constantly, so gating on it makes the outcome depend on where the pointer
+  // happens to be a second after the bars load.
+  readonly property bool electedToAsk: {
+    if (!root.bar || typeof root.bar.moduleWidgets !== "function") return true
+    var instances = root.bar.moduleWidgets(root.moduleName)
+    return instances.length === 0 || instances[0] === root
+  }
+
+  readonly property bool showOffer:
+    !root.bindingsLinePresent && !root.offerDismissed && root.electedToAsk
 
   FileView {
     id: bindingsFile
@@ -244,10 +249,13 @@ BarWidget {
 
   // Keeps the previous contents next to the original before appending, so a
   // bad outcome is one `mv` away from undone.
+  // Blocking, so the backup is on disk before the append is issued. setText is
+  // otherwise fire-and-forget, and the popup promises this file exists.
   FileView {
     id: bindingsBackup
     path: root.bindingsPath + ".bak"
     atomicWrites: true
+    blockWrites: true
     printErrors: false
   }
 
@@ -278,20 +286,22 @@ BarWidget {
   }
 
   function copyBindingsLine() {
-    if (!root.bar) return
-    root.bar.run("printf %s " + Util.shellQuote(root.bindingsLine) + " | wl-copy")
+    Util.execDetached("printf %s " + Util.shellQuote(root.bindingsLine) + " | wl-copy")
     root.offerOpen = false
   }
 
   property bool offerOpen: false
 
-  // Offered once, a moment after the bar has settled, and only if the shortcuts
-  // are genuinely absent. Accepting, copying or declining all close it for good.
+
+  // Offered a moment after the bar has settled. Whether it is actually shown is
+  // left to showOffer on the popup itself -- checking it here as well would
+  // freeze the answer at this instant, which is before bindings.lua has
+  // necessarily been read, and the offer would then never appear.
   Timer {
     interval: 1200
     running: true
     repeat: false
-    onTriggered: if (root.showOffer) root.offerOpen = true
+    onTriggered: root.offerOpen = true
   }
 
   // ---------------------------------------------------------------- actions
@@ -317,14 +327,27 @@ BarWidget {
     return "hl.dispatch(hl.dsp.focus({ monitor = " + root.quoteLua(root.monitor.name) + " }));"
   }
 
+  // Focus a workspace on this screen. Hyprland creates a missing workspace on
+  // whichever monitor is focused, so focus has to travel here first -- which is
+  // also what makes an unvisited slot appear on the right screen.
+  function focusHereLua(name) {
+    return root.focusMonitorLua()
+      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }));"
+  }
+
+  // Do something on another screen and give focus back to where it was.
+  function withOriginLua(body) {
+    return "local origin = hl.get_active_monitor(); " + body
+      + " if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end"
+  }
+
   // Focus the monitor first: an unvisited slot does not exist yet, and Hyprland
   // creates a missing workspace on whichever monitor is focused. Without this,
   // clicking another screen's dot would build its workspace on this one.
   function focusWorkspace(name) {
     if (!root.monitor || name === "") return
 
-    root.runLua(root.focusMonitorLua()
-      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }))")
+    root.runLua(root.focusHereLua(name))
   }
 
   // Right-click: send the focused window to this slot without following it,
@@ -334,13 +357,11 @@ BarWidget {
   function moveWindowTo(name) {
     if (!root.monitor || name === "") return
 
-    root.runLua(
-      "local window = hl.get_active_window(); if not window then return end;"
-      + " local origin = hl.get_active_monitor();"
-      + " " + root.focusMonitorLua()
-      + " hl.dispatch(hl.dsp.window.move({ workspace = " + root.quoteLua("name:" + name)
-      + ", window = \"address:\" .. window.address, follow = false }));"
-      + " if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end")
+    root.runLua("local window = hl.get_active_window(); if not window then return end; "
+      + root.withOriginLua(
+          root.focusMonitorLua()
+          + " hl.dispatch(hl.dsp.window.move({ workspace = " + root.quoteLua("name:" + name)
+          + ", window = \"address:\" .. window.address, follow = false }));"))
   }
 
   // Scrolling the widget walks the same ring as SUPER+TAB, but for the screen
@@ -409,18 +430,13 @@ BarWidget {
     // One snippet, so the whole thing is atomic. A stranded workspace is
     // carried over first -- focusing it would send us to where it is rather
     // than bring it where it belongs -- and a move relocates without
-    // displaying, so the focus still has to follow. Hyprland creates a missing
-    // workspace on whichever monitor is focused, which is why focus travels
-    // here at all, and why it is handed straight back.
-    root.runLua(
-      "local origin = hl.get_active_monitor();"
-      + (stranded
-          ? " hl.dispatch(hl.dsp.workspace.move({ workspace = " + root.quoteLua("name:" + name)
-            + ", monitor = " + root.quoteLua(String(root.monitor.name)) + " }));"
-          : "")
-      + " " + root.focusMonitorLua()
-      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }));"
-      + " if origin then hl.dispatch(hl.dsp.focus({ monitor = origin.name })) end")
+    // displaying, so the focus still has to follow.
+    root.runLua(root.withOriginLua(
+      (stranded
+        ? "hl.dispatch(hl.dsp.workspace.move({ workspace = " + root.quoteLua("name:" + name)
+          + ", monitor = " + root.quoteLua(root.monitor.name) + " })); "
+        : "")
+      + root.focusHereLua(name)))
   }
 
   // Settle first: a dock brings several screens up at once and Hyprland is
@@ -431,9 +447,12 @@ BarWidget {
     onTriggered: root.adopt()
   }
 
-  // The panel behind this bar changed, or this bar is new. Both mean "work out
-  // where this screen should be", and prefix covers a connector swap too.
+  // Two facts, one action. `prefix` changes when the panel behind this bar
+  // changes -- a connector swap, or this bar being new. `monitor` changes when
+  // the screen itself is replaced, which is what a reconnect on the same
+  // connector with the same description looks like: same name, new object.
   onPrefixChanged: adoptSettle.restart()
+  onMonitorChanged: adoptSettle.restart()
 
   // ----------------------------------------------------------------- layout
 
@@ -500,8 +519,8 @@ BarWidget {
       Text {
         width: parent.width
         wrapMode: Text.WordWrap
-        color: root.bar ? root.bar.foreground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        color: root.foreground
+        font.family: root.fontFamily
         font.pixelSize: Style.font.body
         text: "Per-monitor workspaces are running. Adding one line to your "
           + "Hyprland config gives them keyboard shortcuts as well — SUPER+1..N "
@@ -513,8 +532,8 @@ BarWidget {
       Text {
         width: parent.width
         wrapMode: Text.WordWrap
-        color: root.bar ? root.bar.foreground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        color: root.foreground
+        font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         opacity: 0.7
         text: "Appends to " + root.bindingsPath + ":"
@@ -523,8 +542,8 @@ BarWidget {
       Text {
         width: parent.width
         wrapMode: Text.WrapAnywhere
-        color: root.bar ? root.bar.foreground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        color: root.foreground
+        font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         text: root.bindingsLine
       }
@@ -533,8 +552,8 @@ BarWidget {
         width: parent.width
         wrapMode: Text.WordWrap
         visible: root.installError !== ""
-        color: root.bar ? root.bar.urgent : Color.urgent
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        color: root.urgent
+        font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         text: root.installError
       }
@@ -545,24 +564,24 @@ BarWidget {
         Button {
           text: "Add it for me"
           bordered: true
-          foreground: root.bar ? root.bar.foreground : Color.foreground
-          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          foreground: root.foreground
+          fontFamily: root.fontFamily
           onClicked: root.installBindings()
         }
 
         Button {
           text: "Copy the line"
           bordered: true
-          foreground: root.bar ? root.bar.foreground : Color.foreground
-          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          foreground: root.foreground
+          fontFamily: root.fontFamily
           onClicked: root.copyBindingsLine()
         }
 
         Button {
           text: "Not now"
           bordered: true
-          foreground: root.bar ? root.bar.foreground : Color.foreground
-          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          foreground: root.foreground
+          fontFamily: root.fontFamily
           onClicked: root.dismissOffer()
         }
       }
@@ -570,8 +589,8 @@ BarWidget {
       Text {
         width: parent.width
         wrapMode: Text.WordWrap
-        color: root.bar ? root.bar.foreground : Color.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        color: root.foreground
+        font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         opacity: 0.7
         text: "Hyprland reloads on save, so the shortcuts work straight away. The "

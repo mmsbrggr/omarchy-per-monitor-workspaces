@@ -70,7 +70,7 @@ Omarchy's global workspaces, which is not what the dots show.
 You do not have to do it by hand. The first time the widget runs without the
 line, it offers:
 
-![The bar showing a warning triangle before the workspace numbers](docs/warning.png)
+![A popup offering to add the shortcut line, with Add / Copy / Not now](docs/offer.png)
 
 **Add it for me** appends the line, **Copy the line** hands it to you to place
 yourself, **Not now** declines and is never asked again. Nothing is written
@@ -159,6 +159,10 @@ omarchy bar set io.github.mmsbrggr.per-monitor-workspaces count 8 --json
 writes the number to `~/.config/omarchy/per-monitor-workspaces.conf`, and the
 shortcuts read it from there, so the keys and the dots cannot drift apart.
 Hyprland picks up the new count on its next reload.
+
+If you run the shortcuts without the widget, set `per_monitor_workspaces_count`
+above the `pcall(dofile, ...)` line instead. It overrides the file — so if you
+set both, the bar will keep drawing its own number and the keys will not match.
 
 ## Good to know
 

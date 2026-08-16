@@ -12,11 +12,10 @@
 --
 -- Load it from ~/.config/hypr/bindings.lua, after Omarchy's defaults:
 --
---   per_monitor_workspaces_count = 5  -- optional, defaults to 5
 --   pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mmsbrggr.per-monitor-workspaces/hypr/init.lua")
 --
--- Keep the count in step with the bar widget's "count" setting, which decides
--- how many slots each bar draws.
+-- The bar widget is what actually provides per-monitor workspaces; this file
+-- only puts keys on them, and takes its slot count from the widget.
 
 -- The bar widget owns the slot count -- it is one of its settings -- and writes
 -- it here for this file to read. A persistent path rather than a runtime one:
@@ -35,19 +34,20 @@ local function configured_count()
   local file = io.open(home .. "/.config/omarchy/per-monitor-workspaces.conf", "r")
   if not file then return nil end
 
-  local count
-  for line in file:lines() do
-    count = line:match("^%s*count%s*=%s*(%d+)") or count
-  end
+  local text = file:read("a")
   file:close()
 
-  return tonumber(count)
+  return tonumber(text:match("count%s*=%s*(%d+)"))
 end
 
 local COUNT = math.max(1, math.floor(configured_count() or 5))
 
 -- Description, not connector name: DP-2/DP-3 can swap on replug, which would
 -- swap two monitors' workspaces along with them.
+--
+-- Must stay identical to `prefix` in Workspaces.qml, which computes the same
+-- key for the bar. They cannot share code -- different runtimes -- and if they
+-- disagree the dots and the keys quietly address different workspaces.
 --
 -- Two panels of the same model that report no serial describe themselves
 -- identically, and one key for both would mean one shared set of workspaces --
@@ -72,12 +72,6 @@ end
 -- keybindings, the cycle ring and the screen-adoption pass.
 local function slot_name(key, slot)
   return key .. ":" .. slot
-end
-
-local function slot_names(key)
-  local names = {}
-  for slot = 1, COUNT do names[slot] = slot_name(key, slot) end
-  return names
 end
 
 local function slot_selector(slot)
@@ -120,9 +114,13 @@ local function monitor_ring()
   local monitor = hl.get_active_monitor()
   if not monitor then return {}, nil end
 
-  local ring = slot_names(monitor_key(monitor))
-  local own = {}
-  for _, name in ipairs(ring) do own[name] = true end
+  local key = monitor_key(monitor)
+  local ring, own = {}, {}
+  for slot = 1, COUNT do
+    local name = slot_name(key, slot)
+    ring[slot] = name
+    own[name] = true
+  end
 
   local parked = {}
   for _, workspace in ipairs(hl.get_workspaces()) do
@@ -186,15 +184,6 @@ local function active_workspaces(selector)
   return monitor, origin, from, to
 end
 
--- Moving a window does not take keyboard focus with it, and focusing a monitor
--- does nothing while Hyprland already believes that monitor is focused. So
--- after shuffling windows around, the only way to land somewhere defined is to
--- name the window. Without this you end up typing into a screen you are not
--- looking at.
-local function focus_window(address)
-  hl.dispatch(hl.dsp.focus({ window = "address:" .. address }))
-end
-
 local function focus_monitor(selector)
   return function()
     local monitor = target_monitor(selector)
@@ -226,8 +215,11 @@ local function send_workspace(selector)
     end
 
     -- Follow what you sent, landing on the window you were already using rather
-    -- than on whatever happened to be sitting on that screen.
-    focus_window(landed)
+    -- than on whatever happened to be sitting on that screen. Naming the window
+    -- is the only thing that lands anywhere defined: moving a window does not
+    -- carry keyboard focus with it, and focusing a monitor does nothing while
+    -- Hyprland already believes that monitor is focused.
+    hl.dispatch(hl.dsp.focus({ window = "address:" .. landed }))
   end
 end
 
