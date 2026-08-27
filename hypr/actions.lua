@@ -8,6 +8,7 @@
 --
 --   o.bind("SUPER + code:10", "Workspace 1", pmw.focus_slot(1))
 --   o.bind("SUPER + TAB",     "Next",        pmw.cycle(1))
+--   o.bind("SUPER + L",       "Toggle layout", pmw.toggle_layout())
 --   o.bind("SUPER + CTRL + ALT + LEFT", "Focus left", pmw.focus_monitor("l"))
 --
 -- Or load hypr/init.lua instead, which binds a full default set for you.
@@ -301,6 +302,94 @@ local function swap_workspaces(selector)
   end
 end
 
+-- Workspace layouts. Omarchy's SUPER+L toggles the active workspace between
+-- dwindle and scrolling, and its own toggle keys the rule off the workspace
+-- *id*:
+--
+--   hl.workspace_rule({ workspace = "-1343", layout = "scrolling" })
+--
+-- Named workspaces have negative ids, and a rule keyed by a number never
+-- matches one -- so on ours that key does nothing at all, while still firing
+-- the notification that says it worked. Address the workspace by name, the way
+-- everything else in this file does, and it works again.
+
+local function layouts_path()
+  local home = os.getenv("HOME")
+  return home and (home .. "/.local/state/omarchy/mmsbrggr.per-monitor-workspaces.layouts.lua")
+end
+
+local function read_layouts()
+  local path = layouts_path()
+  if not path then return {} end
+
+  local ok, saved = pcall(dofile, path)
+  return (ok and type(saved) == "table") and saved or {}
+end
+
+-- Sorted, so a file rewritten after a one-key change reads as a one-line diff
+-- rather than a reshuffle -- pairs() order is not stable between runs.
+local function write_layouts(layouts)
+  local path = layouts_path()
+  if not path then return end
+
+  local names = {}
+  for name in pairs(layouts) do names[#names + 1] = name end
+  table.sort(names)
+
+  local file = io.open(path, "w")
+  if not file then return end
+
+  file:write("-- Written by the Per-monitor Workspaces SUPER+L binding.\n")
+  file:write("-- Workspace name to tiling layout, re-applied on every config parse.\n")
+  file:write("return {\n")
+  for _, name in ipairs(names) do
+    file:write(string.format("  [%q] = %q,\n", name, layouts[name]))
+  end
+  file:write("}\n")
+  file:close()
+end
+
+-- Ours are addressed by name, Omarchy's numbered ones by their number, and
+-- `tonumber` is the whole difference: a workspace called "3" is Hyprland's
+-- global third, ours is "<screen>:3". Standing on a parked workspace or a
+-- global one the toggle still has to work, so it handles both.
+local function apply_layout(name, layout)
+  local selector = tonumber(name) and name or ("name:" .. name)
+  hl.workspace_rule({ workspace = selector, layout = layout })
+end
+
+-- Re-applied on every parse, because a rule set at runtime is gone the next
+-- time Hyprland reads its config -- which Omarchy does on every theme change.
+-- Without this the layout you picked reverts to dwindle at the moment you
+-- change your theme, which is nowhere near the moment you would blame for it.
+--
+-- Rules are declarative and match a workspace when it is created, so naming
+-- one that does not exist yet is not a problem to work around; it is the point.
+for name, layout in pairs(read_layouts()) do apply_layout(name, layout) end
+
+local function toggle_layout()
+  return function()
+    local monitor = hl.get_active_monitor()
+    local workspace = monitor and monitor.active_workspace
+    if not workspace then return end
+
+    -- Anything that is not dwindle toggles back to it, matching Omarchy: the
+    -- other layouts are reachable by config, not by this key, and landing on
+    -- dwindle is the way back to familiar ground from any of them.
+    local layout = workspace.tiled_layout == "dwindle" and "scrolling" or "dwindle"
+    apply_layout(workspace.name, layout)
+
+    local layouts = read_layouts()
+    layouts[workspace.name] = layout
+    write_layouts(layouts)
+
+    -- Omarchy's toggle says so too, with this icon. Silence would read as the
+    -- same nothing-happened the broken key gave you.
+    hl.dispatch(hl.dsp.exec_cmd(
+      "omarchy-notification-send -g 󱂬 'Workspace layout set to " .. layout .. "'"))
+  end
+end
+
 -- The verbs, onto the table declared at the top. Each is a factory: call it
 -- with its argument and you get the nullary function that `o.bind` takes as a
 -- dispatcher.
@@ -317,6 +406,9 @@ actions.focus_monitor = focus_monitor
 actions.send_window = send_window
 actions.send_workspace = send_workspace
 actions.swap_workspaces = swap_workspaces
+
+-- The workspace under you, whichever screen it is on.
+actions.toggle_layout = toggle_layout
 
 -- Also global, so hypr/bindings.lua can find it without a path, and so a
 -- user's own config can reach it after hypr/init.lua has run.

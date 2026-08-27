@@ -83,6 +83,7 @@ pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/mmsbrggr.per-monito
 | `SUPER + TAB` / `SUPER + SHIFT + TAB` | Next / previous workspace on this screen |
 | `SUPER + scroll` | Same, with the wheel |
 | `SUPER + CTRL + TAB` | Back to this screen's previous workspace |
+| `SUPER + L` | Toggle this workspace between dwindle and scrolling |
 
 Cycling walks the slots in order whether or not you have used one yet — Hyprland
 deletes a workspace as soon as its last window closes, so a cycle over only the
@@ -110,7 +111,16 @@ there, **scroll** to cycle. Each bar acts on its own screen.
 
 `SUPER + 6..0` are removed — with per-monitor slots they could only pull you to
 another screen. `SUPER + CTRL + TAB` and `SUPER + SHIFT + ALT + ←↑↓→` are
-rebound for the same reason. Everything else is untouched.
+rebound for the same reason.
+
+`SUPER + L` is rebound because Omarchy's version breaks here. Its toggle names
+the workspace by *id*, and a named workspace's id is a negative number no
+workspace rule ever matches — so the key does nothing, and still tells you it
+worked. Ours names the workspace the way the rest of this plugin does, and
+remembers your choice in `~/.local/state/omarchy/`, since a rule set at runtime
+is gone the next time Hyprland reads its config.
+
+Everything else is untouched.
 
 ## Configuration
 
@@ -142,8 +152,16 @@ o.bind("SUPER + ALT + L", "Screen right", pmw.focus_monitor("r"))
 ```
 
 `focus_slot`, `move_to_slot`, `move_to_slot_silently`, `cycle`, `focus_monitor`,
-`send_window`, `send_workspace`, `swap_workspaces`, plus `count`. Each takes its
-argument and returns a function to bind.
+`send_window`, `send_workspace`, `swap_workspaces`, `toggle_layout`, plus
+`count`. Each takes its argument and returns a function to bind.
+
+Taking this path means Omarchy's `SUPER + L` stays as it is, which on a named
+workspace does nothing — bind `toggle_layout` if you want that key back:
+
+```lua
+hl.unbind("SUPER + L")
+o.bind("SUPER + L", "Toggle workspace layout", pmw.toggle_layout())
+```
 
 `count` changes while Hyprland runs, whenever you change the setting. Keys that
 depend on how many slots there are go inside `on_count`, which runs immediately
