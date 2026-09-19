@@ -10,7 +10,7 @@ import qs.Ui
 // numbered 1..slotCount, matching this plugin's hypr/init.lua: that file binds
 // SUPER+N to the workspace named "<monitor key>:N" on the focused monitor.
 // Omarchy's built-in widget cannot show these — it lists global ids 1-10, and
-// per-monitor workspaces are named, so their ids are negative.
+// per-monitor workspaces live in a block of ids per screen, from 101 up.
 BarWidget {
   id: root
   moduleName: "mmsbrggr.per-monitor-workspaces"
@@ -358,6 +358,16 @@ BarWidget {
     Hyprland.dispatch("function() " + body + " end")
   }
 
+  // The selector for a workspace, as a Lua expression. A slot nobody has used
+  // yet has to be created by its numbered id, and the id belongs to the
+  // Hyprland half, which hands out each screen's block. Without that half
+  // loaded, fall back to the name: the workspace is created named, and still
+  // works, only its slide direction is arbitrary.
+  function selectorLua(name) {
+    return "(_G.per_monitor_workspaces and _G.per_monitor_workspaces.selector("
+      + root.quoteLua(name) + ") or " + root.quoteLua("name:" + name) + ")"
+  }
+
   function focusMonitorLua() {
     return "hl.dispatch(hl.dsp.focus({ monitor = " + root.quoteLua(root.monitor.name) + " }));"
   }
@@ -367,7 +377,7 @@ BarWidget {
   // also what makes an unvisited slot appear on the right screen.
   function focusHereLua(name) {
     return root.focusMonitorLua()
-      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }));"
+      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.selectorLua(name) + " }));"
   }
 
   // Do something on another screen and give focus back to where it was.
@@ -395,7 +405,7 @@ BarWidget {
     root.runLua("local window = hl.get_active_window(); if not window then return end; "
       + root.withOriginLua(
           root.focusMonitorLua()
-          + " hl.dispatch(hl.dsp.window.move({ workspace = " + root.quoteLua("name:" + name)
+          + " hl.dispatch(hl.dsp.window.move({ workspace = " + root.selectorLua(name)
           + ", window = \"address:\" .. window.address, follow = false }));"))
   }
 
