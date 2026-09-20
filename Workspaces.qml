@@ -127,7 +127,7 @@ BarWidget {
 
   // The revision of hypr/actions.lua this widget is written against; see
   // `actions.version` there.
-  readonly property int luaVersion: 2
+  readonly property int luaVersion: 3
 
   // An update replaces both halves on disk, and neither running copy notices.
   // The shell loads this file again only when it restarts, and Hyprland reads
@@ -357,6 +357,9 @@ BarWidget {
 
     function onRawEvent(event) {
       if (root.truthEvents[event.name]) truthDefer.restart()
+      if (event.name === "monitorremoved" || event.name === "monitorremovedv2"
+        || event.name === "monitoradded" || event.name === "monitoraddedv2")
+        adoptSettle.restart()
     }
   }
 
@@ -754,12 +757,97 @@ BarWidget {
     root.runLua(root.withOriginLua(body))
   }
 
+  // Workspaces whose own screen is gone, sitting on this one. They become
+  // ordinary slots here and remember where they came from in their name.
+  //
+  // The guard is the whole correctness of this: absorb only when the screen a
+  // workspace is named for is *not connected*. Foreign workspaces also exist
+  // for a moment in the middle of a swap, while both screens are attached --
+  // those must be left alone, and this is what leaves them alone.
+  function guestsToAbsorb() {
+    var here = String(root.monitor ? root.monitor.name : "")
+    if (here === "" || root.prefix === "") return []
+
+    var connected = ({})
+    var monitors = Hyprland.monitors.values
+    for (var m = 0; m < monitors.length; m++) connected[root.keyForMonitor(monitors[m].name)] = true
+
+    var found = []
+    for (var i = 0; i < root.workspaces.length; i++) {
+      var workspace = root.workspaces[i]
+      if (workspace.monitor !== here) continue
+
+      var base = root.baseName(workspace.name)
+      if (base.indexOf("special:") === 0) continue
+      var cut = base.lastIndexOf(":")
+      if (cut <= 0) continue
+      var key = base.substring(0, cut)
+      var slot = Number(base.substring(cut + 1))
+      if (!(slot > 0) || connected[key]) continue
+
+      // Its existing trailer wins: a guest whose host screen has now gone in
+      // turn still belongs to the screen it started on, not to the one in the
+      // middle.
+      var origin = root.guestOrigin(workspace.name)
+      if (!origin) {
+        var block = root.blocks[key]
+        if (!block) continue
+        origin = { block: block, slot: slot }
+      }
+      found.push({ workspace: workspace, origin: origin })
+    }
+
+    found.sort(function(left, right) {
+      return left.origin.block !== right.origin.block
+        ? left.origin.block - right.origin.block
+        : left.origin.slot - right.origin.slot
+    })
+    return found
+  }
+
+  // Moves that go through the Lua half's `relocate`, which knows the ids and
+  // the layout file. A half from before `relocate` existed is still loaded for
+  // a moment after an update, until reloadStaleLua's reload lands; call into it
+  // and the whole batch fails, so leave the batch to the next settle instead.
+  function runRelocations(body) {
+    root.runLua("local pmw = _G.per_monitor_workspaces; "
+      + "if not (pmw and pmw.relocate) then return end; " + body)
+  }
+
+  function absorb() {
+    var guests = root.guestsToAbsorb()
+    if (guests.length === 0) return
+
+    // Append after the last slot in use, so the part of the bar you already
+    // know is untouched.
+    var taken = root.occupiedSlots(root.prefix)
+    var next = 0
+    for (var slot in taken) next = Math.max(next, Number(slot))
+    next = next + 1
+
+    var body = ""
+    for (var i = 0; i < guests.length; i++) {
+      while (taken[next]) next++
+      var guest = guests[i]
+      var to = root.slotName(next) + "#" + guest.origin.block + "." + guest.origin.slot
+      body += "pmw.relocate(" + root.quoteLua(guest.workspace.name) + ", "
+        + root.quoteLua(to) + ", nil); "
+      taken[next] = true
+      next++
+    }
+
+    root.runRelocations(body)
+  }
+
   // Settle first: a dock brings several screens up at once and Hyprland is
   // still placing them. Re-checked rather than assumed when the timer fires.
   Timer {
     id: adoptSettle
     interval: 700
-    onTriggered: root.adopt()
+    onTriggered: {
+      root.adopt()
+      root.absorb()
+    }
   }
 
   // Two facts, one action. `prefix` changes when the panel behind this bar
