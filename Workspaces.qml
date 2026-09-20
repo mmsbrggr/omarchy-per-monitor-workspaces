@@ -7,8 +7,8 @@ import qs.Commons
 import qs.Ui
 
 // Per-monitor workspace indicator. Each bar shows only its own screen's slots,
-// numbered 1..slotCount, matching this plugin's hypr/init.lua: that file binds
-// SUPER+N to the workspace named "<monitor key>:N" on the focused monitor.
+// numbered 1..effectiveCount, matching this plugin's hypr/init.lua: that file
+// binds SUPER+N to the workspace named "<monitor key>:N" on the focused monitor.
 // Omarchy's built-in widget cannot show these — it lists global ids 1-10, and
 // per-monitor workspaces live in a block of ids per screen, from 101 up.
 BarWidget {
@@ -805,6 +805,43 @@ BarWidget {
     return found
   }
 
+  // Guests of this screen, wherever they are living. Their trailer names this
+  // screen's block, which is the only thing left that says where they belong:
+  // they were renamed into their host's scheme when they were taken in, so
+  // `strandedSlots` -- which looks for workspaces still carrying this screen's
+  // name -- cannot see them. Two mechanisms, disjoint by construction.
+  function reclaimGuests() {
+    if (root.prefix === "" || root.myBlock === 0 || !root.monitor) return
+
+    var mine = []
+    for (var i = 0; i < root.workspaces.length; i++) {
+      var origin = root.guestOrigin(root.workspaces[i].name)
+      if (origin && origin.block === root.myBlock) mine.push({ workspace: root.workspaces[i], origin: origin })
+    }
+    if (mine.length === 0) return
+
+    mine.sort(function(left, right) { return left.origin.slot - right.origin.slot })
+
+    var taken = root.occupiedSlots(root.prefix)
+    var body = ""
+    for (var g = 0; g < mine.length; g++) {
+      var guest = mine[g]
+      var target = guest.origin.slot
+      if (taken[target]) {
+        // Its own slot was taken while it was away. It comes home anyway, to
+        // the nearest free one, and stops being a guest either way.
+        target = 1
+        while (taken[target]) target++
+      }
+      body += "pmw.relocate(" + root.quoteLua(guest.workspace.name) + ", "
+        + root.quoteLua(root.slotName(target)) + ", "
+        + root.quoteLua(String(root.monitor.name)) + "); "
+      taken[target] = true
+    }
+
+    root.runRelocations(body)
+  }
+
   // Moves that go through the Lua half's `relocate`, which knows the ids and
   // the layout file. A half from before `relocate` existed is still loaded for
   // a moment after an update, until reloadStaleLua's reload lands; call into it
@@ -845,6 +882,7 @@ BarWidget {
     id: adoptSettle
     interval: 700
     onTriggered: {
+      root.reclaimGuests()
       root.adopt()
       root.absorb()
     }
