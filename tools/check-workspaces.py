@@ -2,7 +2,8 @@
 """Check every workspace against the plugin's own rules.
 
   1. the name parses as <key>:<slot> with an optional #<block>.<slot> trailer
-  2. it sits on the screen its name calls for (or is a guest, which may not)
+  2. it sits on the screen its name calls for -- a guest included, since it
+     carries its host's key
   3. its id is block * 100 + slot, for the block its host key owns
 """
 import json, os, re, subprocess, sys

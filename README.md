@@ -208,7 +208,8 @@ scroll wheel and a click all reach it.
 Plug the screen back in and they go home — to their own slot where it is still
 free, to the nearest free one where it is not. A workspace you deliberately
 moved while the screen was away, by swapping it to another screen, stays where
-you put it.
+you put it — and the screen it left keeps the extra dot for it, since that
+screen's slot count only shrinks back once the workspace empties.
 
 The screen itself is put back too. Left to itself Hyprland hands a returning
 screen a fresh global workspace, and a dock can put the same panel on a

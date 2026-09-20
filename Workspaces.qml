@@ -149,6 +149,7 @@ BarWidget {
     publishDefer.restart()
     truthDefer.restart()
     root.reloadStaleLua()
+    adoptSettle.restart()
   }
 
   Timer { id: publishDefer; interval: 800; onTriggered: root.publishCount() }
@@ -204,6 +205,19 @@ BarWidget {
     return root.prefix !== "" && root.baseName(name) === root.slotName(slot)
   }
 
+  // A valid slot number: a plain positive integer below the id ceiling,
+  // matching names.id's own range. `Number` alone is looser than the Lua
+  // side's `%d+` pattern -- it accepts "+3", "0x10", "1e2", "3.0" and
+  // "Infinity" -- and an unbounded or infinite result here would size
+  // effectiveCount and buildEntries' own loop off a name nothing sane would
+  // produce. Returns 0 for anything that does not qualify.
+  function parseSlot(text) {
+    var str = String(text)
+    if (!/^[0-9]+$/.test(str)) return 0
+    var slot = Number(str)
+    return slot > 0 && slot < 100 ? slot : 0
+  }
+
   // The same key the Lua half builds, for any screen rather than just this
   // one. `prefix` is this screen's; absorption needs every connected screen's
   // to tell a guest from a workspace whose screen is merely elsewhere.
@@ -234,7 +248,7 @@ BarWidget {
       var base = root.baseName(workspace.name)
       var cut = base.lastIndexOf(":")
       if (cut <= 0 || base.substring(0, cut) !== key) continue
-      var slot = Number(base.substring(cut + 1))
+      var slot = root.parseSlot(base.substring(cut + 1))
       if (slot > 0) taken[slot] = workspace
     }
     return taken
@@ -662,8 +676,8 @@ BarWidget {
     var ring = root.entries
     if (ring.length < 2) return
 
-    var active = root.activeHere()
-    var index = Math.max(0, ring.map(function(entry) { return entry.name }).indexOf(active))
+    var active = root.baseName(root.activeHere())
+    var index = Math.max(0, ring.map(function(entry) { return root.baseName(entry.name) }).indexOf(active))
 
     root.focusWorkspace(ring[((index + step) % ring.length + ring.length) % ring.length].name)
   }
@@ -714,14 +728,18 @@ BarWidget {
   // Every slot of this screen's that is living on another monitor. Hyprland
   // parks them on a survivor when the screen goes and hands none of them back
   // when it returns, so a screen can come home to find several of its own
-  // workspaces scattered -- not just the one it happens to land on.
+  // workspaces scattered -- not just the one it happens to land on. Returns
+  // each workspace's real name, trailer and all, rather than the synthesized
+  // bare slot name: the screen holding it may since have absorbed it as a
+  // guest, and a move targeting the bare name would then name nothing and
+  // silently do nothing, orphaning the workspace.
   function strandedSlots() {
     var here = String(root.monitor ? root.monitor.name : "")
     var names = []
     for (var slot = 1; slot <= root.effectiveCount; slot++) {
       var workspace = root.workspaceByName(root.slotName(slot))
       if (workspace !== null && workspace.monitor !== "" && workspace.monitor !== here)
-        names.push(root.slotName(slot))
+        names.push(workspace.name)
     }
     return names
   }
@@ -790,7 +808,7 @@ BarWidget {
       var cut = base.lastIndexOf(":")
       if (cut <= 0) continue
       var key = base.substring(0, cut)
-      var slot = Number(base.substring(cut + 1))
+      var slot = root.parseSlot(base.substring(cut + 1))
       if (!(slot > 0) || connected[key]) continue
 
       // Its existing trailer wins: a guest whose host screen has now gone in
@@ -828,7 +846,7 @@ BarWidget {
       if (base.indexOf("special:") === 0) continue
       var cut = base.lastIndexOf(":")
       if (cut <= 0) continue
-      if (!(Number(base.substring(cut + 1)) > 0)) continue
+      if (!(root.parseSlot(base.substring(cut + 1)) > 0)) continue
 
       var origin = root.guestOrigin(workspace.name)
       if (origin && origin.block === root.myBlock) mine.push({ workspace: workspace, origin: origin })
@@ -886,7 +904,7 @@ BarWidget {
       var guest = guests[i]
       var to = root.slotName(next) + "#" + guest.origin.block + "." + guest.origin.slot
       body += "pmw.relocate(" + root.quoteLua(guest.workspace.name) + ", "
-        + root.quoteLua(to) + ", nil); "
+        + root.quoteLua(to) + ", " + root.quoteLua(String(root.monitor.name)) + "); "
       taken[next] = true
       root.claimedThisTick[next] = true
       next++
@@ -914,6 +932,7 @@ BarWidget {
   // connector with the same description looks like: same name, new object.
   onPrefixChanged: adoptSettle.restart()
   onMonitorChanged: adoptSettle.restart()
+  onBlocksChanged: adoptSettle.restart()
 
   // ----------------------------------------------------------------- layout
 
@@ -940,7 +959,7 @@ BarWidget {
         readonly property bool occupied: workspace !== null && workspace.windows > 0
         // This monitor's active slot, not the globally focused one, so every bar
         // reports where its own screen is sitting.
-        readonly property bool focused: root.activeHere() === modelData.name
+        readonly property bool focused: root.baseName(root.activeHere()) === root.baseName(modelData.name)
         // The one workspace Hyprland has focused, anywhere. Every bar has a
         // `focused` slot of its own; exactly one of them is also this, and it
         // is the one SUPER+N acts on.
