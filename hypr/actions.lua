@@ -224,8 +224,24 @@ local SCRATCH_ID = 999999000
 --
 -- Two phases through scratch ids, so two workspaces on each other's ids can
 -- trade. One whose id is held by anything that is not moving stays put.
--- Renamed afterwards, because changing the id of a workspace that was never
--- renamed resets its name to the number.
+--
+-- Each workspace is renamed to the name it already has before any of that, for
+-- two separate reasons.
+--
+-- It is what makes the name survive. A workspace keeps its name across a change
+-- of id only if it was explicitly renamed at some point; a name that came from
+-- a `default_name` rule alone is dropped and the workspace comes out called
+-- after its new number. Every slot `workspace_selector` creates is named by
+-- exactly such a rule, so that is the common case. Measured: a rule-named slot
+-- rehomed without this arrives called "304", with it, called what it was.
+--
+-- And it is what keeps anything watching in step. Renaming afterwards means
+-- naming the workspace by the id it has just moved to, and a listener that did
+-- not follow the move applies that rename to whatever it still files under
+-- that id -- the other workspace of the pair, which then wears a name from the
+-- far screen. Quickshell's Hyprland model is such a listener: it has no
+-- handler for `changeworkspaceid` at all. Sent first, the rename is addressed
+-- by the id everyone still agrees on and lands on the workspace we mean.
 local function rehome(ids)
   local movers = {}
   for _, id in ipairs(ids) do
@@ -254,12 +270,14 @@ local function rehome(ids)
     end
   end
 
+  for _, mover in ipairs(movers) do
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = tostring(mover.id), name = mover.name }))
+  end
   for index, mover in ipairs(movers) do
     hl.dispatch(hl.dsp.workspace.change_id({ workspace = tostring(mover.id), id = SCRATCH_ID + index }))
   end
   for index, mover in ipairs(movers) do
     hl.dispatch(hl.dsp.workspace.change_id({ workspace = tostring(SCRATCH_ID + index), id = mover.wanted }))
-    hl.dispatch(hl.dsp.workspace.rename({ workspace = tostring(mover.wanted), name = mover.name }))
   end
 end
 
