@@ -516,9 +516,19 @@ BarWidget {
         // reports where its own screen is sitting.
         readonly property bool focused: root.monitor !== null && root.monitor.activeWorkspace !== null
           && String(root.monitor.activeWorkspace.name) === modelData.name
+        // The one workspace Hyprland has focused, anywhere. Every bar has a
+        // `focused` slot of its own; exactly one of them is also this, and it
+        // is the one SUPER+N acts on.
+        readonly property bool current: Hyprland.focusedWorkspace !== null
+          && String(Hyprland.focusedWorkspace.name) === modelData.name
 
         bar: root.bar
         text: focused ? root.focusedGlyph : modelData.label
+        // The accent on that one, so the bars also say which screen the keys
+        // will act on. The other branch restates WidgetButton's own default,
+        // which is what overriding a property in QML costs. A parked slot is
+        // untouched by this: `active` below puts it on `activeColor` instead.
+        foreground: current ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground)
         // Parked workspaces belong to another screen and only borrow this one,
         // so they take the bar's accent rather than passing as slot N.
         active: modelData.parked
