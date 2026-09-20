@@ -487,14 +487,21 @@ end
 
 -- Workspace layouts. Omarchy's SUPER+L toggles the active workspace between
 -- dwindle and scrolling, and its own toggle keys the rule off the workspace
--- *id*:
+-- *id*, filing the choice under that number:
 --
---   hl.workspace_rule({ workspace = "-1343", layout = "scrolling" })
+--   hl.workspace_rule({ workspace = "202", layout = "scrolling" })
 --
--- Named workspaces have negative ids, and a rule keyed by a number never
--- matches one -- so on ours that key does nothing at all, while still firing
--- the notification that says it worked. Address the workspace by name, the way
--- everything else in this file does, and it works again.
+-- A slot's id is whichever block its screen was handed, so a layout stored
+-- against the bare number says nothing about whose slot it was -- and a slot
+-- that never got an id is named-only, with a negative id no numeric rule
+-- matches. Address the workspace by name, the way everything else in this file
+-- does, and neither is a problem.
+--
+-- One asymmetry to know about: where both exist for the same workspace, an
+-- id-keyed layout rule wins over a name-keyed one until the next parse. Nothing
+-- here sets one -- the rule in `workspace_selector` carries only a name -- but
+-- running Omarchy's toggle by hand on a slot does, and ours will look dead on
+-- that workspace for the rest of the session.
 
 local layouts_path = state_path("layouts")
 
