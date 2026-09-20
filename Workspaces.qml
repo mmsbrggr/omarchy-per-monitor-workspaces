@@ -50,6 +50,33 @@ BarWidget {
   readonly property string configPath:
     stateDir ? stateDir + "/" + root.moduleName + ".lua" : ""
 
+  readonly property string blocksPath:
+    stateDir ? stateDir + "/" + root.moduleName + ".blocks.lua" : ""
+
+  // The Lua half hands out a block of ids per screen and keeps the map here.
+  // The widget needs it to read and write guest trailers, which carry a block
+  // number rather than a key.
+  property var blocks: ({})
+
+  FileView {
+    id: blocksFile
+    path: root.blocksPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var map = ({})
+      var lines = String(text()).split("\n")
+      for (var i = 0; i < lines.length; i++) {
+        var match = lines[i].match(/^\s*\["(.+)"\]\s*=\s*(\d+),/)
+        if (match) map[match[1]] = Number(match[2])
+      }
+      root.blocks = map
+    }
+  }
+
+  readonly property int myBlock: root.prefix === "" ? 0 : (root.blocks[root.prefix] || 0)
+
   // Hoisted the way Tray.qml does, so the popup below is content rather than
   // a wall of `bar ? bar.x : fallback`.
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -65,7 +92,7 @@ BarWidget {
     // the view has settled is dropped silently, with neither signal, so the
     // count is only considered published once the write actually lands.
     onSaved: {
-      root.publishedCount = root.slotCount
+      root.publishedCount = root.globalCount
       root.pushCount()
     }
     onSaveFailed: publishDefer.restart()
@@ -76,10 +103,10 @@ BarWidget {
   property int publishedCount: 0
 
   function publishCount() {
-    if (root.configPath === "" || root.slotCount === root.publishedCount) return
+    if (root.configPath === "" || root.globalCount === root.publishedCount) return
     configFile.setText("-- Written by the Per-monitor Workspaces bar widget.\n"
       + "-- Derived from its `count` setting in shell.json; edit it there.\n"
-      + "return { count = " + root.slotCount + " }\n")
+      + "return { count = " + root.globalCount + " }\n")
   }
 
   // The file above is only read when Hyprland parses its config, so on its own
@@ -95,7 +122,7 @@ BarWidget {
   // it, and the Lua side drops an unchanged count.
   function pushCount() {
     root.runLua("local pmw = _G.per_monitor_workspaces; "
-      + "if pmw and pmw.set_count then pmw.set_count(" + root.slotCount + ") end")
+      + "if pmw and pmw.set_count then pmw.set_count(" + root.globalCount + ") end")
   }
 
   // The revision of hypr/actions.lua this widget is written against; see
@@ -117,7 +144,7 @@ BarWidget {
       + "pmw.reloading = true; hl.exec_cmd(\"hyprctl reload\") end")
   }
 
-  onSlotCountChanged: publishDefer.restart()
+  onGlobalCountChanged: publishDefer.restart()
   Component.onCompleted: {
     publishDefer.restart()
     truthDefer.restart()
@@ -158,6 +185,82 @@ BarWidget {
 
   function slotName(slot) {
     return root.prefix === "" ? "" : root.prefix + ":" + slot
+  }
+
+  // The naming grammar, mirroring hypr/names.lua. The two runtimes cannot
+  // share code, so they share a contract instead -- as they already do for
+  // monitor_key and for <key>:<slot>. If they disagree, the dots and the keys
+  // address different workspaces.
+  function baseName(name) {
+    return String(name).replace(/#\d+\.\d+$/, "")
+  }
+
+  function guestOrigin(name) {
+    var match = String(name).match(/#(\d+)\.(\d+)$/)
+    return match ? { block: Number(match[1]), slot: Number(match[2]) } : null
+  }
+
+  function matchesSlot(name, slot) {
+    return root.prefix !== "" && root.baseName(name) === root.slotName(slot)
+  }
+
+  // The same key the Lua half builds, for any screen rather than just this
+  // one. `prefix` is this screen's; absorption needs every connected screen's
+  // to tell a guest from a workspace whose screen is merely elsewhere.
+  function keyForMonitor(monitorName) {
+    var monitors = Hyprland.monitors.values
+    var self = null
+    for (var i = 0; i < monitors.length; i++) {
+      if (String(monitors[i].name) === String(monitorName)) { self = monitors[i]; break }
+    }
+    if (!self) return ""
+
+    var description = String(self.description || "")
+    if (description === "") return String(self.name || "")
+    for (var j = 0; j < monitors.length; j++) {
+      if (monitors[j] !== self && String(monitors[j].description || "") === description)
+        return description + "@" + String(self.name || "")
+    }
+    return description
+  }
+
+  // Slot number -> workspace, for the screen with this key. A guest counts as
+  // occupying the slot it was given.
+  function occupiedSlots(key) {
+    var taken = ({})
+    if (key === "") return taken
+    for (var i = 0; i < root.workspaces.length; i++) {
+      var workspace = root.workspaces[i]
+      var base = root.baseName(workspace.name)
+      var cut = base.lastIndexOf(":")
+      if (cut <= 0 || base.substring(0, cut) !== key) continue
+      var slot = Number(base.substring(cut + 1))
+      if (slot > 0) taken[slot] = workspace
+    }
+    return taken
+  }
+
+  // The configured count, plus whatever a guest has pushed past it on this
+  // screen. Computed, never stored, so it falls back on its own when the
+  // guests leave, and `shell.json` is never written.
+  readonly property int effectiveCount: {
+    var taken = root.occupiedSlots(root.prefix)
+    var highest = root.slotCount
+    for (var slot in taken) highest = Math.max(highest, Number(slot))
+    return highest
+  }
+
+  // The keys are global, so the count handed to Lua is the largest any screen
+  // needs. Every bar computes it from the same snapshot, so they all publish
+  // the same number and none fight.
+  readonly property int globalCount: {
+    var monitors = Hyprland.monitors.values
+    var highest = root.slotCount
+    for (var i = 0; i < monitors.length; i++) {
+      var taken = root.occupiedSlots(root.keyForMonitor(monitors[i].name))
+      for (var slot in taken) highest = Math.max(highest, Number(slot))
+    }
+    return highest
   }
 
   // ------------------------------------------------------------------ truth
@@ -260,7 +363,7 @@ BarWidget {
   function workspaceByName(name) {
     var values = root.workspaces
     for (var i = 0; i < values.length; i++) {
-      if (values[i].name === name) return values[i]
+      if (root.baseName(values[i].name) === name) return values[i]
     }
 
     return null
@@ -287,7 +390,7 @@ BarWidget {
     if (root.prefix === "") return items
 
     var own = ({})
-    for (var slot = 1; slot <= root.slotCount; slot++) {
+    for (var slot = 1; slot <= root.effectiveCount; slot++) {
       var name = root.slotName(slot)
       own[name] = true
       items.push({ name: name, label: String(slot), tooltip: "", parked: false })
@@ -302,7 +405,7 @@ BarWidget {
       if (workspace.monitor !== here) continue
       // hyprctl reports special workspaces in the same list, and the name is
       // the seam. The Lua half uses workspace.special for the same cut.
-      if (own[workspaceName] || workspaceName.indexOf("special:") === 0) continue
+      if (own[root.baseName(workspaceName)] || workspaceName.indexOf("special:") === 0) continue
       parked.push(workspace)
     }
     // By screen, then by slot as a number: sorted as text, ":10" would come
@@ -591,8 +694,8 @@ BarWidget {
     var name = root.activeHere()
     if (name === "") return false
 
-    for (var slot = 1; slot <= root.slotCount; slot++) {
-      if (name === root.slotName(slot)) return true
+    for (var slot = 1; slot <= root.effectiveCount; slot++) {
+      if (root.matchesSlot(name, slot)) return true
     }
     return false
   }
@@ -604,11 +707,10 @@ BarWidget {
   function strandedSlots() {
     var here = String(root.monitor ? root.monitor.name : "")
     var names = []
-    for (var slot = 1; slot <= root.slotCount; slot++) {
-      var name = root.slotName(slot)
-      var workspace = root.workspaceByName(name)
+    for (var slot = 1; slot <= root.effectiveCount; slot++) {
+      var workspace = root.workspaceByName(root.slotName(slot))
       if (workspace !== null && workspace.monitor !== "" && workspace.monitor !== here)
-        names.push(name)
+        names.push(root.slotName(slot))
     }
     return names
   }
@@ -616,7 +718,7 @@ BarWidget {
   // The slot to put it on: the first that already exists, so a workspace parked
   // elsewhere while this screen was away comes home rather than being stranded.
   function homeSlot() {
-    for (var slot = 1; slot <= root.slotCount; slot++) {
+    for (var slot = 1; slot <= root.effectiveCount; slot++) {
       var name = root.slotName(slot)
       if (root.workspaceByName(name) !== null) return name
     }
