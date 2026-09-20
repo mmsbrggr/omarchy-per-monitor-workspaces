@@ -686,6 +686,14 @@ BarWidget {
   // This lives in the widget because Quickshell rides Hyprland's IPC socket,
   // which announces a returning screen reliably. One instance per screen, each
   // minding its own, so there is nothing to coordinate.
+
+  // Slots promised earlier in this same settle tick. reclaimGuests() and
+  // absorb() both hand out slots on this screen from one unrefreshed snapshot,
+  // so without this the second would give away a slot the first has already
+  // spoken for -- two workspaces renamed to one name, and two ids colliding on
+  // the next rehome.
+  property var claimedThisTick: ({})
+
   // The workspace this bar's screen is showing.
   function activeHere() {
     if (!root.monitor) return ""
@@ -815,14 +823,22 @@ BarWidget {
 
     var mine = []
     for (var i = 0; i < root.workspaces.length; i++) {
-      var origin = root.guestOrigin(root.workspaces[i].name)
-      if (origin && origin.block === root.myBlock) mine.push({ workspace: root.workspaces[i], origin: origin })
+      var workspace = root.workspaces[i]
+      var base = root.baseName(workspace.name)
+      if (base.indexOf("special:") === 0) continue
+      var cut = base.lastIndexOf(":")
+      if (cut <= 0) continue
+      if (!(Number(base.substring(cut + 1)) > 0)) continue
+
+      var origin = root.guestOrigin(workspace.name)
+      if (origin && origin.block === root.myBlock) mine.push({ workspace: workspace, origin: origin })
     }
     if (mine.length === 0) return
 
     mine.sort(function(left, right) { return left.origin.slot - right.origin.slot })
 
     var taken = root.occupiedSlots(root.prefix)
+    for (var claimed in root.claimedThisTick) taken[claimed] = true
     var body = ""
     for (var g = 0; g < mine.length; g++) {
       var guest = mine[g]
@@ -837,6 +853,7 @@ BarWidget {
         + root.quoteLua(root.slotName(target)) + ", "
         + root.quoteLua(String(root.monitor.name)) + "); "
       taken[target] = true
+      root.claimedThisTick[target] = true
     }
 
     root.runRelocations(body)
@@ -858,6 +875,7 @@ BarWidget {
     // Append after the last slot in use, so the part of the bar you already
     // know is untouched.
     var taken = root.occupiedSlots(root.prefix)
+    for (var claimed in root.claimedThisTick) taken[claimed] = true
     var next = 0
     for (var slot in taken) next = Math.max(next, Number(slot))
     next = next + 1
@@ -870,6 +888,7 @@ BarWidget {
       body += "pmw.relocate(" + root.quoteLua(guest.workspace.name) + ", "
         + root.quoteLua(to) + ", nil); "
       taken[next] = true
+      root.claimedThisTick[next] = true
       next++
     }
 
@@ -882,6 +901,7 @@ BarWidget {
     id: adoptSettle
     interval: 700
     onTriggered: {
+      root.claimedThisTick = ({})
       root.reclaimGuests()
       root.adopt()
       root.absorb()
