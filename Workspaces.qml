@@ -241,7 +241,12 @@ BarWidget {
     "destroyworkspace": true, "destroyworkspacev2": true,
     "moveworkspace": true, "moveworkspacev2": true,
     "renameworkspace": true, "changeworkspaceid": true,
-    "openwindow": true, "closewindow": true, "movewindow": true, "movewindowv2": true
+    "openwindow": true, "closewindow": true, "movewindow": true, "movewindowv2": true,
+    // A screen coming or going moves workspaces without any of the events
+    // above firing for all of them, and adoption reads this snapshot to decide
+    // what to bring home.
+    "monitoradded": true, "monitoraddedv2": true,
+    "monitorremoved": true, "monitorremovedv2": true
   })
 
   Connections {
@@ -592,6 +597,22 @@ BarWidget {
     return false
   }
 
+  // Every slot of this screen's that is living on another monitor. Hyprland
+  // parks them on a survivor when the screen goes and hands none of them back
+  // when it returns, so a screen can come home to find several of its own
+  // workspaces scattered -- not just the one it happens to land on.
+  function strandedSlots() {
+    var here = String(root.monitor ? root.monitor.name : "")
+    var names = []
+    for (var slot = 1; slot <= root.slotCount; slot++) {
+      var name = root.slotName(slot)
+      var workspace = root.workspaceByName(name)
+      if (workspace !== null && workspace.monitor !== "" && workspace.monitor !== here)
+        names.push(name)
+    }
+    return names
+  }
+
   // The slot to put it on: the first that already exists, so a workspace parked
   // elsewhere while this screen was away comes home rather than being stranded.
   function homeSlot() {
@@ -602,24 +623,33 @@ BarWidget {
     return root.slotName(1)
   }
 
+  // Two jobs, and a screen can need either without the other. Its workspaces
+  // are brought home whatever it is showing -- coming back on one of its own
+  // slots is the common case, and used to mean the rest were left where they
+  // were parked. Focus only moves when the screen is showing something that is
+  // not its own; a parked workspace someone deliberately cycled to is left
+  // alone, which is why this runs on a screen appearing rather than on every
+  // change of what a screen shows.
   function adopt() {
-    if (!root.monitor || root.prefix === "" || root.showsOwnSlot()) return
+    if (!root.monitor || root.prefix === "") return
 
-    var name = root.homeSlot()
-    var workspace = root.workspaceByName(name)
-    var stranded = workspace !== null && workspace.monitor !== ""
-      && workspace.monitor !== String(root.monitor.name)
+    var stranded = root.strandedSlots()
+    var settled = root.showsOwnSlot()
+    if (stranded.length === 0 && settled) return
 
-    // One snippet, so the whole thing is atomic. A stranded workspace is
-    // carried over first -- focusing it would send us to where it is rather
+    // One snippet, so the whole thing is atomic. Stranded workspaces are
+    // carried over first -- focusing one would send us to where it is rather
     // than bring it where it belongs -- and a move relocates without
     // displaying, so the focus still has to follow.
-    root.runLua(root.withOriginLua(
-      (stranded
-        ? "hl.dispatch(hl.dsp.workspace.move({ workspace = " + root.quoteLua("name:" + name)
-          + ", monitor = " + root.quoteLua(root.monitor.name) + " })); "
-        : "")
-      + root.focusHereLua(name)))
+    var body = ""
+    for (var i = 0; i < stranded.length; i++) {
+      body += "hl.dispatch(hl.dsp.workspace.move({ workspace = "
+        + root.quoteLua("name:" + stranded[i])
+        + ", monitor = " + root.quoteLua(root.monitor.name) + " })); "
+    }
+    if (!settled) body += root.focusHereLua(root.homeSlot())
+
+    root.runLua(root.withOriginLua(body))
   }
 
   // Settle first: a dock brings several screens up at once and Hyprland is
