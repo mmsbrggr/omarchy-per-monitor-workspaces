@@ -98,10 +98,30 @@ BarWidget {
       + "if pmw and pmw.set_count then pmw.set_count(" + root.slotCount + ") end")
   }
 
+  // The revision of hypr/actions.lua this widget is written against; see
+  // `actions.version` there.
+  readonly property int luaVersion: 2
+
+  // An update replaces both halves on disk, and neither running copy notices.
+  // The shell loads this file again only when it restarts, and Hyprland reads
+  // the Lua half only when it next parses its config -- a plugin rescan does
+  // not reload QML, and Hyprland does not watch files it reached by dofile.
+  // The shell restarts at the end of `omarchy update`, so this widget tends to
+  // arrive first, and then asks Hyprland to re-read its config: the same reload
+  // Omarchy's theme switch does. Every bar asks, and only the first reloads: it
+  // marks the table the reload is about to replace, so the rest find either
+  // that mark or the new table, which is no longer behind.
+  function reloadStaleLua() {
+    root.runLua("local pmw = _G.per_monitor_workspaces; "
+      + "if pmw and (pmw.version or 1) < " + root.luaVersion + " and not pmw.reloading then "
+      + "pmw.reloading = true; hl.exec_cmd(\"hyprctl reload\") end")
+  }
+
   onSlotCountChanged: publishDefer.restart()
   Component.onCompleted: {
     publishDefer.restart()
     truthDefer.restart()
+    root.reloadStaleLua()
   }
 
   Timer { id: publishDefer; interval: 800; onTriggered: root.publishCount() }
@@ -472,9 +492,12 @@ BarWidget {
   // yet has to be created by its numbered id, and the id belongs to the
   // Hyprland half, which hands out each screen's block. Without that half
   // loaded, fall back to the name: the workspace is created named, and still
-  // works, only its slide direction is arbitrary.
+  // works, only its slide direction is arbitrary. The same goes for a half from
+  // before `selector` existed, which is what Hyprland is still running for a
+  // moment after an update -- see reloadStaleLua.
   function selectorLua(name) {
-    return "(_G.per_monitor_workspaces and _G.per_monitor_workspaces.selector("
+    var pmw = "_G.per_monitor_workspaces"
+    return "(" + pmw + " and " + pmw + ".selector and " + pmw + ".selector("
       + root.quoteLua(name) + ") or " + root.quoteLua("name:" + name) + ")"
   }
 

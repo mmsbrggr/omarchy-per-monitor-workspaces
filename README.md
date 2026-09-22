@@ -212,6 +212,23 @@ Screens are identified by description rather than connector, because `DP-2` and
 `DP-3` can swap on replug. Two identical panels that report no serial describe
 themselves alike; those get the connector appended to tell them apart.
 
+## Updating
+
+```sh
+omarchy plugin update mmsbrggr.per-monitor-workspaces
+```
+
+The new version takes over the next time the shell restarts, which
+`omarchy update` does at the end; run `omarchy-restart-shell` to have it now.
+The widget then has Hyprland re-read its config, the way a theme change does,
+so the keys change along with the dots and there is nothing else to reload.
+
+Workspaces that are already open when you update keep their old numbers,
+since Hyprland will not renumber a workspace in place. Until they are closed,
+switching to or from them slides the way it did before, and touchpad swipes
+follow the old order. Log out and back in to have every workspace on the new
+numbers at once.
+
 ## Uninstall
 
 ```sh

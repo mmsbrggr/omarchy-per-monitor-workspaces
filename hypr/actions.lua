@@ -599,6 +599,14 @@ actions.swap_workspaces = swap_workspaces
 -- The workspace under you, whichever screen it is on.
 actions.toggle_layout = toggle_layout
 
+-- Which revision of this file is loaded, for the bar widget. Hyprland keeps
+-- running the copy it parsed until it next reads its config, so right after an
+-- update the widget can be newer than what is loaded here, and it reloads
+-- Hyprland when it finds this lower than it expects. Raise it whenever the
+-- widget starts relying on something new in this file. Versions from before
+-- this field existed read as 1.
+actions.version = 2
+
 -- Also global, so hypr/bindings.lua can find it without a path, and so a
 -- user's own config can reach it after hypr/init.lua has run.
 _G.per_monitor_workspaces = actions
