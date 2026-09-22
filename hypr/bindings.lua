@@ -60,9 +60,10 @@ o.bind("SUPER + mouse_up", "Scroll active workspace backward", pmw.cycle(-1))
 hl.unbind("SUPER + CTRL + TAB")
 o.bind("SUPER + CTRL + TAB", "Former workspace", hl.dsp.focus({ workspace = "previous_per_monitor" }))
 
--- Omarchy's "Toggle workspace layout" keys its rule off the workspace id, and
--- a named workspace's id is a negative number no rule ever matches -- so on
--- ours the key does nothing, and says it worked. Same key, addressed by name.
+-- Omarchy's "Toggle workspace layout" keys its rule off the workspace id, which
+-- here is whichever block the screen was handed -- it says nothing about whose
+-- slot you set, and misses a slot that never got an id at all. Same key,
+-- addressed by name.
 hl.unbind("SUPER + L")
 o.bind("SUPER + L", "Toggle workspace layout", pmw.toggle_layout())
 

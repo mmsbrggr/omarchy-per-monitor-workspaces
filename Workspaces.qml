@@ -10,7 +10,7 @@ import qs.Ui
 // numbered 1..slotCount, matching this plugin's hypr/init.lua: that file binds
 // SUPER+N to the workspace named "<monitor key>:N" on the focused monitor.
 // Omarchy's built-in widget cannot show these — it lists global ids 1-10, and
-// per-monitor workspaces are named, so their ids are negative.
+// per-monitor workspaces live in a block of ids per screen, from 101 up.
 BarWidget {
   id: root
   moduleName: "mmsbrggr.per-monitor-workspaces"
@@ -98,8 +98,31 @@ BarWidget {
       + "if pmw and pmw.set_count then pmw.set_count(" + root.slotCount + ") end")
   }
 
+  // The revision of hypr/actions.lua this widget is written against; see
+  // `actions.version` there.
+  readonly property int luaVersion: 2
+
+  // An update replaces both halves on disk, and neither running copy notices.
+  // The shell loads this file again only when it restarts, and Hyprland reads
+  // the Lua half only when it next parses its config -- a plugin rescan does
+  // not reload QML, and Hyprland does not watch files it reached by dofile.
+  // The shell restarts at the end of `omarchy update`, so this widget tends to
+  // arrive first, and then asks Hyprland to re-read its config: the same reload
+  // Omarchy's theme switch does. Every bar asks, and only the first reloads: it
+  // marks the table the reload is about to replace, so the rest find either
+  // that mark or the new table, which is no longer behind.
+  function reloadStaleLua() {
+    root.runLua("local pmw = _G.per_monitor_workspaces; "
+      + "if pmw and (pmw.version or 1) < " + root.luaVersion + " and not pmw.reloading then "
+      + "pmw.reloading = true; hl.exec_cmd(\"hyprctl reload\") end")
+  }
+
   onSlotCountChanged: publishDefer.restart()
-  Component.onCompleted: publishDefer.restart()
+  Component.onCompleted: {
+    publishDefer.restart()
+    truthDefer.restart()
+    root.reloadStaleLua()
+  }
 
   Timer { id: publishDefer; interval: 800; onTriggered: root.publishCount() }
 
@@ -137,10 +160,102 @@ BarWidget {
     return root.prefix === "" ? "" : root.prefix + ":" + slot
   }
 
+  // ------------------------------------------------------------------ truth
+  //
+  // Where the workspaces come from, and why not from Quickshell.
+  //
+  // Quickshell's Hyprland model files workspaces by id and has no handler for
+  // `changeworkspaceid` -- Hyprland broadcasts it, nothing receives it. This
+  // plugin renumbers workspaces whenever a slot is rehomed, so after any swap
+  // that model is filing two of them under each other's ids. Nothing there
+  // repairs it: `refreshWorkspaces()` re-reads monitors and windows but never
+  // a name, and re-applying Hyprland's id-to-monitor mapping onto stale ids
+  // moves the right workspaces to the wrong screens. The damage lands later
+  // and permanently -- an emptied workspace is destroyed by id, taking the
+  // wrong one out of the model and leaving the other stranded on this bar
+  // under a name from the far screen.
+  //
+  // So the compositor is asked directly for the one thing the ids can move:
+  // which workspaces exist, what they are called, where they are, and what is
+  // on them. Quickshell is still trusted for screens, which are keyed by
+  // connector and cannot drift this way.
+  property var workspaces: []
+  property var activeByMonitor: ({})
+  property string focusedMonitorName: ""
+
+  Process {
+    id: truth
+    command: ["sh", "-c", "hyprctl -j monitors; printf '\\036'; hyprctl -j workspaces"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var parts = String(this.text).split("\u001e")
+        if (parts.length < 2) return
+
+        var monitors, list
+        try {
+          monitors = JSON.parse(parts[0])
+          list = JSON.parse(parts[1])
+        } catch (error) {
+          return
+        }
+
+        var active = ({})
+        var focused = ""
+        for (var i = 0; i < monitors.length; i++) {
+          var monitor = monitors[i]
+          active[String(monitor.name)] =
+            monitor.activeWorkspace ? String(monitor.activeWorkspace.name) : ""
+          if (monitor.focused) focused = String(monitor.name)
+        }
+
+        var found = []
+        for (var j = 0; j < list.length; j++) {
+          found.push({
+            name: String(list[j].name),
+            monitor: String(list[j].monitor || ""),
+            windows: Number(list[j].windows) || 0
+          })
+        }
+
+        root.activeByMonitor = active
+        root.focusedMonitorName = focused
+        root.workspaces = found
+      }
+    }
+  }
+
+  // One read per burst. A swap alone is a dozen events, and every one of them
+  // would otherwise be its own hyprctl.
+  Timer {
+    id: truthDefer
+    interval: 40
+    onTriggered: truth.running = true
+  }
+
+  // Everything that can change which workspaces exist, what they are called,
+  // where they are, or what is on them. Focus included: the active workspace
+  // per screen is read from the same snapshot.
+  readonly property var truthEvents: ({
+    "workspace": true, "workspacev2": true, "focusedmon": true, "focusedmonv2": true,
+    "createworkspace": true, "createworkspacev2": true,
+    "destroyworkspace": true, "destroyworkspacev2": true,
+    "moveworkspace": true, "moveworkspacev2": true,
+    "renameworkspace": true, "changeworkspaceid": true,
+    "openwindow": true, "closewindow": true, "movewindow": true, "movewindowv2": true
+  })
+
+  Connections {
+    target: Hyprland
+
+    function onRawEvent(event) {
+      if (root.truthEvents[event.name]) truthDefer.restart()
+    }
+  }
+
   function workspaceByName(name) {
-    var values = Hyprland.workspaces.values
+    var values = root.workspaces
     for (var i = 0; i < values.length; i++) {
-      if (String(values[i].name) === name) return values[i]
+      if (values[i].name === name) return values[i]
     }
 
     return null
@@ -174,20 +289,35 @@ BarWidget {
     }
 
     var parked = []
-    var values = Hyprland.workspaces.values
+    var values = root.workspaces
+    var here = String(root.monitor ? root.monitor.name : "")
     for (var i = 0; i < values.length; i++) {
       var workspace = values[i]
-      var workspaceName = String(workspace.name || "")
-      if (workspace.monitor !== root.monitor) continue
-      // Quickshell's HyprlandWorkspace exposes no `special` flag, so the name
-      // is the only seam. The Lua half uses workspace.special for the same cut.
+      var workspaceName = workspace.name
+      if (workspace.monitor !== here) continue
+      // hyprctl reports special workspaces in the same list, and the name is
+      // the seam. The Lua half uses workspace.special for the same cut.
       if (own[workspaceName] || workspaceName.indexOf("special:") === 0) continue
       parked.push(workspace)
     }
-    parked.sort(function(left, right) { return left.id - right.id })
+    // By screen, then by slot as a number: sorted as text, ":10" would come
+    // before ":2". The ids would have ordered these before, and are no longer
+    // read here.
+    parked.sort(function(left, right) {
+      var leftCut = left.name.lastIndexOf(":")
+      var rightCut = right.name.lastIndexOf(":")
+      var leftKey = leftCut > 0 ? left.name.substring(0, leftCut) : left.name
+      var rightKey = rightCut > 0 ? right.name.substring(0, rightCut) : right.name
+      if (leftKey !== rightKey) return leftKey < rightKey ? -1 : 1
+
+      var leftSlot = Number(left.name.substring(leftCut + 1))
+      var rightSlot = Number(right.name.substring(rightCut + 1))
+      if (isNaN(leftSlot) || isNaN(rightSlot)) return left.name < right.name ? -1 : 1
+      return leftSlot - rightSlot
+    })
 
     for (var p = 0; p < parked.length; p++) {
-      var parkedName = String(parked[p].name)
+      var parkedName = parked[p].name
       items.push({
         name: parkedName,
         label: root.parkedGlyph,
@@ -358,6 +488,19 @@ BarWidget {
     Hyprland.dispatch("function() " + body + " end")
   }
 
+  // The selector for a workspace, as a Lua expression. A slot nobody has used
+  // yet has to be created by its numbered id, and the id belongs to the
+  // Hyprland half, which hands out each screen's block. Without that half
+  // loaded, fall back to the name: the workspace is created named, and still
+  // works, only its slide direction is arbitrary. The same goes for a half from
+  // before `selector` existed, which is what Hyprland is still running for a
+  // moment after an update -- see reloadStaleLua.
+  function selectorLua(name) {
+    var pmw = "_G.per_monitor_workspaces"
+    return "(" + pmw + " and " + pmw + ".selector and " + pmw + ".selector("
+      + root.quoteLua(name) + ") or " + root.quoteLua("name:" + name) + ")"
+  }
+
   function focusMonitorLua() {
     return "hl.dispatch(hl.dsp.focus({ monitor = " + root.quoteLua(root.monitor.name) + " }));"
   }
@@ -367,7 +510,7 @@ BarWidget {
   // also what makes an unvisited slot appear on the right screen.
   function focusHereLua(name) {
     return root.focusMonitorLua()
-      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.quoteLua("name:" + name) + " }));"
+      + " hl.dispatch(hl.dsp.focus({ workspace = " + root.selectorLua(name) + " }));"
   }
 
   // Do something on another screen and give focus back to where it was.
@@ -395,7 +538,7 @@ BarWidget {
     root.runLua("local window = hl.get_active_window(); if not window then return end; "
       + root.withOriginLua(
           root.focusMonitorLua()
-          + " hl.dispatch(hl.dsp.window.move({ workspace = " + root.quoteLua("name:" + name)
+          + " hl.dispatch(hl.dsp.window.move({ workspace = " + root.selectorLua(name)
           + ", window = \"address:\" .. window.address, follow = false }));"))
   }
 
@@ -408,8 +551,7 @@ BarWidget {
     var ring = root.entries
     if (ring.length < 2) return
 
-    var active = root.monitor && root.monitor.activeWorkspace
-      ? String(root.monitor.activeWorkspace.name) : ""
+    var active = root.activeHere()
     var index = Math.max(0, ring.map(function(entry) { return entry.name }).indexOf(active))
 
     root.focusWorkspace(ring[((index + step) % ring.length + ring.length) % ring.length].name)
@@ -433,11 +575,17 @@ BarWidget {
   // This lives in the widget because Quickshell rides Hyprland's IPC socket,
   // which announces a returning screen reliably. One instance per screen, each
   // minding its own, so there is nothing to coordinate.
-  function showsOwnSlot() {
-    var active = root.monitor && root.monitor.activeWorkspace
-    if (!active) return false
+  // The workspace this bar's screen is showing.
+  function activeHere() {
+    if (!root.monitor) return ""
+    var name = root.activeByMonitor[String(root.monitor.name)]
+    return name === undefined ? "" : name
+  }
 
-    var name = String(active.name)
+  function showsOwnSlot() {
+    var name = root.activeHere()
+    if (name === "") return false
+
     for (var slot = 1; slot <= root.slotCount; slot++) {
       if (name === root.slotName(slot)) return true
     }
@@ -459,8 +607,8 @@ BarWidget {
 
     var name = root.homeSlot()
     var workspace = root.workspaceByName(name)
-    var stranded = workspace !== null && workspace.monitor !== null
-      && workspace.monitor !== root.monitor
+    var stranded = workspace !== null && workspace.monitor !== ""
+      && workspace.monitor !== String(root.monitor.name)
 
     // One snippet, so the whole thing is atomic. A stranded workspace is
     // carried over first -- focusing it would send us to where it is rather
@@ -511,16 +659,15 @@ BarWidget {
         required property var modelData
 
         readonly property var workspace: root.workspaceByName(modelData.name)
-        readonly property bool occupied: workspace !== null && workspace.toplevels.values.length > 0
+        readonly property bool occupied: workspace !== null && workspace.windows > 0
         // This monitor's active slot, not the globally focused one, so every bar
         // reports where its own screen is sitting.
-        readonly property bool focused: root.monitor !== null && root.monitor.activeWorkspace !== null
-          && String(root.monitor.activeWorkspace.name) === modelData.name
+        readonly property bool focused: root.activeHere() === modelData.name
         // The one workspace Hyprland has focused, anywhere. Every bar has a
         // `focused` slot of its own; exactly one of them is also this, and it
         // is the one SUPER+N acts on.
-        readonly property bool current: Hyprland.focusedWorkspace !== null
-          && String(Hyprland.focusedWorkspace.name) === modelData.name
+        readonly property bool current: focused && root.monitor !== null
+          && root.focusedMonitorName === String(root.monitor.name)
 
         bar: root.bar
         text: focused ? root.focusedGlyph : modelData.label

@@ -14,8 +14,8 @@ a laptop alone that is fine. Plug in a second screen and it grates: you press
 where workspace 1 happens to live. The screen you were looking at does nothing.
 
 With this plugin each monitor gets its own set, the way dwm, awesome and i3 do
-it. Nothing is hardcoded — no monitor names, no workspace rules. A screen gets
-its own set the first time you press a slot key on it.
+it. Nothing is hardcoded — no monitor names in your config, nothing to declare
+up front. A screen gets its own set the first time you press a slot key on it.
 
 ## How it works, honestly
 
@@ -23,8 +23,8 @@ its own set the first time you press a slot key on it.
 list, any of which can be shown on any monitor. There is no lower level to
 configure — a native version of this would have to come from Hyprland itself.
 
-So this plugin builds the idea on top of what Hyprland does offer: *named*
-workspaces. Each screen gets workspaces named after it — `<screen>:1`,
+So this plugin builds the idea on top of what Hyprland does offer: a workspace
+can carry a name. Each screen gets workspaces named after it — `<screen>:1`,
 `<screen>:2` — and `SUPER+1` resolves to a name at the moment you press it,
 from whichever screen has focus. You never see those names; the bar labels
 everything by position.
@@ -33,6 +33,17 @@ That is the whole trick, and it explains the edges: a workspace still belongs to
 Hyprland's one global list, so unplugging a screen leaves its workspaces parked
 on a surviving one, and a returning screen has to be put back on its own. Both
 are handled — see [Unplugging a screen](#unplugging-a-screen).
+
+The name is the identity, but the workspaces underneath are numbered ones, not
+Hyprland's *named* workspaces — and the difference is something you can see.
+Hyprland picks which way a switch slides by comparing the two workspaces'
+numbers, and a named workspace is handed a negative one in the order it was
+created, so going from slot 1 to slot 2 slid whichever way that order happened
+to fall. So each screen is given a block of numbers the first time it is seen:
+slot N on the screen holding block B is workspace `B * 100 + N`, and a workspace
+rule gives it its name as it is created. Numbers now climb with the slots on
+every screen, so a switch slides the way you pressed it. The blocks are kept in
+`~/.local/state/omarchy/`, so a screen keeps its own across a restart.
 
 ## Requirements
 
@@ -113,12 +124,15 @@ there, **scroll** to cycle. Each bar acts on its own screen.
 another screen. `SUPER + CTRL + TAB` and `SUPER + SHIFT + ALT + ←↑↓→` are
 rebound for the same reason.
 
-`SUPER + L` is rebound because Omarchy's version breaks here. Its toggle names
-the workspace by *id*, and a named workspace's id is a negative number no
-workspace rule ever matches — so the key does nothing, and still tells you it
-worked. Ours names the workspace the way the rest of this plugin does, and
-remembers your choice in `~/.local/state/omarchy/`, since a rule set at runtime
-is gone the next time Hyprland reads its config.
+`SUPER + L` is rebound because Omarchy's version files your choice under the
+workspace's *number*. Here that number is an implementation detail — which block
+a screen was handed, in the order screens were first seen — so a layout stored
+against it says nothing about whose slot 2 you set, and a slot that never got a
+number of its own is invisible to it: slot 100 and beyond on a screen, or one
+whose number something else already holds. Ours addresses the workspace by name,
+the way the rest of this plugin does, and remembers your choice in
+`~/.local/state/omarchy/`, since a rule set at runtime is gone the next time
+Hyprland reads its config.
 
 Everything else is untouched.
 
@@ -197,6 +211,23 @@ screens showing each other's workspaces. The widget sorts both out.
 Screens are identified by description rather than connector, because `DP-2` and
 `DP-3` can swap on replug. Two identical panels that report no serial describe
 themselves alike; those get the connector appended to tell them apart.
+
+## Updating
+
+```sh
+omarchy plugin update mmsbrggr.per-monitor-workspaces
+```
+
+The new version takes over the next time the shell restarts, which
+`omarchy update` does at the end; run `omarchy-restart-shell` to have it now.
+The widget then has Hyprland re-read its config, the way a theme change does,
+so the keys change along with the dots and there is nothing else to reload.
+
+Workspaces that are already open when you update keep their old numbers,
+since Hyprland will not renumber a workspace in place. Until they are closed,
+switching to or from them slides the way it did before, and touchpad swipes
+follow the old order. Log out and back in to have every workspace on the new
+numbers at once.
 
 ## Uninstall
 
