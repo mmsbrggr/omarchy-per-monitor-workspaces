@@ -93,6 +93,7 @@ BarWidget {
     // count is only considered published once the write actually lands.
     onSaved: {
       root.publishedCount = root.globalCount
+      root.publishedSlots = root.slotCount
       root.pushCount()
     }
     onSaveFailed: publishDefer.restart()
@@ -101,12 +102,16 @@ BarWidget {
   // Written once per shell session, and again whenever the setting changes.
   // Confirmed on the way out rather than assumed on the way in.
   property int publishedCount: 0
+  property int publishedSlots: 0
 
+  // `count` sizes the keys, so it is the most slots any screen needs; `slots`
+  // is the setting itself, which sizes each screen's SUPER+TAB ring.
   function publishCount() {
-    if (root.configPath === "" || root.globalCount === root.publishedCount) return
+    if (root.configPath === "") return
+    if (root.globalCount === root.publishedCount && root.slotCount === root.publishedSlots) return
     configFile.setText("-- Written by the Per-monitor Workspaces bar widget.\n"
       + "-- Derived from its `count` setting in shell.json; edit it there.\n"
-      + "return { count = " + root.globalCount + " }\n")
+      + "return { count = " + root.globalCount + ", slots = " + root.slotCount + " }\n")
   }
 
   // The file above is only read when Hyprland parses its config, so on its own
@@ -122,7 +127,7 @@ BarWidget {
   // it, and the Lua side drops an unchanged count.
   function pushCount() {
     root.runLua("local pmw = _G.per_monitor_workspaces; "
-      + "if pmw and pmw.set_count then pmw.set_count(" + root.globalCount + ") end")
+      + "if pmw and pmw.set_count then pmw.set_count(" + root.globalCount + ", " + root.slotCount + ") end")
   }
 
   // The revision of hypr/actions.lua this widget is written against; see
@@ -145,11 +150,12 @@ BarWidget {
   }
 
   onGlobalCountChanged: publishDefer.restart()
+  onSlotCountChanged: publishDefer.restart()
   Component.onCompleted: {
     publishDefer.restart()
     truthDefer.restart()
     root.reloadStaleLua()
-    adoptSettle.restart()
+    root.screenArrived()
   }
 
   Timer { id: publishDefer; interval: 800; onTriggered: root.publishCount() }
@@ -757,15 +763,17 @@ BarWidget {
   // Two jobs, and a screen can need either without the other. Its workspaces
   // are brought home whatever it is showing -- coming back on one of its own
   // slots is the common case, and used to mean the rest were left where they
-  // were parked. Focus only moves when the screen is showing something that is
-  // not its own; a parked workspace someone deliberately cycled to is left
-  // alone, which is why this runs on a screen appearing rather than on every
-  // change of what a screen shows.
+  // were parked. Focus only moves when this screen itself has just appeared
+  // and is showing something that is not its own; a parked workspace someone
+  // deliberately cycled to is left alone. Another screen coming or going is
+  // no reason to move focus here: unplug the focused screen and Hyprland
+  // shows its workspace on this one, which absorb() is about to take in as a
+  // slot, not something to send the user away from.
   function adopt() {
     if (!root.monitor || root.prefix === "") return
 
     var stranded = root.strandedSlots()
-    var settled = root.showsOwnSlot()
+    var settled = !root.arrived || root.showsOwnSlot()
     if (stranded.length === 0 && settled) return
 
     // One snippet, so the whole thing is atomic. Stranded workspaces are
@@ -863,9 +871,13 @@ BarWidget {
       var target = guest.origin.slot
       if (taken[target]) {
         // Its own slot was taken while it was away. It comes home anyway, to
-        // the nearest free one, and stops being a guest either way.
-        target = 1
-        while (taken[target]) target++
+        // the nearest free one, and stops being a guest either way. Below
+        // wins a tie, so it stays among the slots you already know.
+        var own = target
+        for (var d = 1; taken[target]; d++) {
+          if (own - d >= 1 && !taken[own - d]) target = own - d
+          else if (!taken[own + d]) target = own + d
+        }
       }
       body += "pmw.relocate(" + root.quoteLua(guest.workspace.name) + ", "
         + root.quoteLua(root.slotName(target)) + ", "
@@ -923,15 +935,24 @@ BarWidget {
       root.reclaimGuests()
       root.adopt()
       root.absorb()
+      root.arrived = false
     }
+  }
+
+  // Whether this bar's own screen appeared since the last settle; see adopt().
+  property bool arrived: false
+
+  function screenArrived() {
+    root.arrived = true
+    adoptSettle.restart()
   }
 
   // Two facts, one action. `prefix` changes when the panel behind this bar
   // changes -- a connector swap, or this bar being new. `monitor` changes when
   // the screen itself is replaced, which is what a reconnect on the same
   // connector with the same description looks like: same name, new object.
-  onPrefixChanged: adoptSettle.restart()
-  onMonitorChanged: adoptSettle.restart()
+  onPrefixChanged: root.screenArrived()
+  onMonitorChanged: root.screenArrived()
   onBlocksChanged: adoptSettle.restart()
 
   // ----------------------------------------------------------------- layout

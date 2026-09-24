@@ -29,8 +29,15 @@
 -- `per_monitor_workspaces_count` still wins where it is set, for anyone running
 -- these bindings without the widget. Setting both makes the keys and the dots
 -- disagree, and nothing can warn you.
+--
+-- Two numbers: `count`, the most slots any screen needs, which sizes the keys,
+-- and `slots`, the configured count, which sizes each screen's own ring. They
+-- differ while a screen holds guests from an unplugged one.
 local function configured_count()
-  if _G.per_monitor_workspaces_count then return tonumber(_G.per_monitor_workspaces_count) end
+  if _G.per_monitor_workspaces_count then
+    local count = tonumber(_G.per_monitor_workspaces_count)
+    return count, count
+  end
 
   local home = os.getenv("HOME")
   if not home then return nil end
@@ -38,7 +45,8 @@ local function configured_count()
   local ok, config = pcall(dofile,
     home .. "/.local/state/omarchy/mmsbrggr.per-monitor-workspaces.lua")
 
-  return ok and type(config) == "table" and tonumber(config.count) or nil
+  if not (ok and type(config) == "table") then return nil end
+  return tonumber(config.count), tonumber(config.slots)
 end
 
 local function whole_count(value)
@@ -53,7 +61,9 @@ end
 -- and register with `on_count` for anything that has to be rebuilt when it
 -- moves. The file above is only read at config-parse time; the widget pushes a
 -- later change straight in, so a snapshot goes stale within the session.
-local actions = { count = whole_count(configured_count()) or 5 }
+local initial_count, initial_slots = configured_count()
+local actions = { count = whole_count(initial_count) or 5 }
+actions.slots = whole_count(initial_slots) or actions.count
 
 local count_listeners = {}
 
@@ -75,9 +85,10 @@ end
 -- has to cost nothing. `per_monitor_workspaces_count` keeps winning here as it
 -- does above -- an override that only held until the widget's next write would
 -- be worse than one that never took.
-function actions.set_count(value)
+function actions.set_count(value, slots)
   if _G.per_monitor_workspaces_count then return end
 
+  actions.slots = whole_count(slots) or actions.slots
   local count = whole_count(value)
   if not count or count == actions.count then return end
 
@@ -313,6 +324,8 @@ for name, layout in pairs(read_layouts()) do apply_layout(name, layout) end
 --
 -- Renamed by id rather than by its old name: the id is what every listener
 -- agrees on, and a move has just changed which screen the name belongs to.
+-- Except a workspace created by name: its id is negative, and "-1337" is a
+-- relative selector to Hyprland, not an id. Those go by name.
 local function relocate(from, to, monitor)
   local workspace = find_workspace(function(candidate) return candidate.name == from end)
   if not workspace then return end
@@ -322,7 +335,8 @@ local function relocate(from, to, monitor)
   end
 
   if to ~= from then
-    hl.dispatch(hl.dsp.workspace.rename({ workspace = tostring(workspace.id), name = to }))
+    local selector = workspace.id > 0 and tostring(workspace.id) or ("name:" .. from)
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = selector, name = to }))
 
     -- The layout preference is filed under the workspace's name, so a rename
     -- would quietly lose it. Carry it, and apply it, so the workspace looks
@@ -414,15 +428,20 @@ local function monitor_ring()
   local monitor = hl.get_active_monitor()
   if not monitor then return {}, nil end
 
+  -- This screen's configured slots, plus any live one past them -- a guest.
+  -- Not every slot up to `count`: that is the most any screen needs, and
+  -- another screen's guests would put empty slots in this ring the bar here
+  -- does not show.
   local key = monitor_key(monitor)
   local ring, own = {}, {}
   for slot = 1, actions.count do
-    local name = names.slot(key, slot)
     local live = find_workspace(function(workspace)
       return names.matches(workspace.name, key, slot)
     end)
-    ring[slot] = live and live.name or name
-    own[ring[slot]] = true
+    if live or slot <= actions.slots then
+      ring[#ring + 1] = live and live.name or names.slot(key, slot)
+      own[ring[#ring]] = true
+    end
   end
 
   local parked = {}
