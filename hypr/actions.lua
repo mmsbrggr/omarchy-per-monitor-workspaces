@@ -29,8 +29,15 @@
 -- `per_monitor_workspaces_count` still wins where it is set, for anyone running
 -- these bindings without the widget. Setting both makes the keys and the dots
 -- disagree, and nothing can warn you.
+--
+-- Two numbers: `count`, the most slots any screen needs, which sizes the keys,
+-- and `slots`, the configured count, which sizes each screen's own ring. They
+-- differ while a screen holds guests from an unplugged one.
 local function configured_count()
-  if _G.per_monitor_workspaces_count then return tonumber(_G.per_monitor_workspaces_count) end
+  if _G.per_monitor_workspaces_count then
+    local count = tonumber(_G.per_monitor_workspaces_count)
+    return count, count
+  end
 
   local home = os.getenv("HOME")
   if not home then return nil end
@@ -38,7 +45,8 @@ local function configured_count()
   local ok, config = pcall(dofile,
     home .. "/.local/state/omarchy/mmsbrggr.per-monitor-workspaces.lua")
 
-  return ok and type(config) == "table" and tonumber(config.count) or nil
+  if not (ok and type(config) == "table") then return nil end
+  return tonumber(config.count), tonumber(config.slots)
 end
 
 local function whole_count(value)
@@ -53,7 +61,9 @@ end
 -- and register with `on_count` for anything that has to be rebuilt when it
 -- moves. The file above is only read at config-parse time; the widget pushes a
 -- later change straight in, so a snapshot goes stale within the session.
-local actions = { count = whole_count(configured_count()) or 5 }
+local initial_count, initial_slots = configured_count()
+local actions = { count = whole_count(initial_count) or 5 }
+actions.slots = whole_count(initial_slots) or actions.count
 
 local count_listeners = {}
 
@@ -75,9 +85,10 @@ end
 -- has to cost nothing. `per_monitor_workspaces_count` keeps winning here as it
 -- does above -- an override that only held until the widget's next write would
 -- be worse than one that never took.
-function actions.set_count(value)
+function actions.set_count(value, slots)
   if _G.per_monitor_workspaces_count then return end
 
+  actions.slots = whole_count(slots) or actions.slots
   local count = whole_count(value)
   if not count or count == actions.count then return end
 
@@ -148,12 +159,11 @@ local function monitor_key(monitor)
   return description
 end
 
--- The naming scheme, in one place. Everything that builds or recognises a
--- workspace name goes through these, so the scheme cannot drift between the
--- keybindings, the cycle ring and the screen-adoption pass.
-local function slot_name(key, slot)
-  return key .. ":" .. slot
-end
+-- The naming scheme lives in names.lua -- dofile, not require, for the same
+-- reason as the state files above: a plain Lua interpreter loads it too, for
+-- tests/names_test.lua.
+local here = debug.getinfo(1, "S").source:match("@(.*/)") or ""
+local names = dofile(here .. "names.lua")
 
 -- Slots are numbered workspaces that carry a name, not named workspaces.
 --
@@ -165,26 +175,18 @@ end
 --
 -- So each screen gets a block of ids, handed out the first time its key is
 -- seen and kept in a state file so it survives restarts: slot N of the screen
--- in block B is workspace B * ID_STRIDE + N. Ids then rise with slots on every
--- screen, and a workspace rule gives each one its slot name as it is created.
--- The name stays the identity everything else matches on.
-local ID_STRIDE = 100
+-- in block B is workspace B * names.STRIDE + N. Ids then rise with slots on
+-- every screen, and a workspace rule gives each one its slot name as it is
+-- created. The name stays the identity everything else matches on.
 
 local blocks_path = state_path("blocks")
 local blocks = read_state(blocks_path)
 
--- The key and slot a name was built from, or nothing for a name that is not one
--- of ours.
-local function split_name(name)
-  local key, slot = string.match(name, "^(.*):(%d+)$")
-  return key, tonumber(slot)
-end
-
 -- The id a slot name should have. `allocate` gives an unseen screen its block;
 -- without it, a key that has none yet has no id either.
 local function slot_id(name, allocate)
-  local key, slot = split_name(name)
-  if not key or slot < 1 or slot >= ID_STRIDE then return nil end
+  local key, slot = names.split(name)
+  if not key then return nil end
 
   local block = tonumber(blocks[key])
   if not block then
@@ -196,11 +198,11 @@ local function slot_id(name, allocate)
     blocks[key] = block
     write_state(blocks_path,
       "-- Written by the Per-monitor Workspaces bindings.\n"
-        .. "-- Monitor key to id block: slot N is workspace block * " .. ID_STRIDE .. " + N.\n",
+        .. "-- Monitor key to id block: slot N is workspace block * " .. names.STRIDE .. " + N.\n",
       blocks)
   end
 
-  return block * ID_STRIDE + slot
+  return names.id(block, slot)
 end
 
 local function find_workspace(matches)
@@ -281,6 +283,75 @@ local function rehome(ids)
   end
 end
 
+-- Workspace layouts, moved up here because `relocate` below needs to carry one
+-- across a rename. The explanatory comment for the scheme itself stays with
+-- `toggle_layout`, further down, which is the other thing that reads it.
+local layouts_path = state_path("layouts")
+
+local function read_layouts()
+  return read_state(layouts_path)
+end
+
+local function write_layouts(layouts)
+  write_state(layouts_path,
+    "-- Written by the Per-monitor Workspaces SUPER+L binding.\n"
+      .. "-- Workspace name to tiling layout, re-applied on every config parse.\n",
+    layouts)
+end
+
+-- Ours are addressed by name, Omarchy's numbered ones by their number, and
+-- `tonumber` is the whole difference: a workspace called "3" is Hyprland's
+-- global third, ours is "<screen>:3". Standing on a parked workspace or a
+-- global one the toggle still has to work, so it handles both.
+local function apply_layout(name, layout)
+  local selector = tonumber(name) and name or ("name:" .. name)
+  hl.workspace_rule({ workspace = selector, layout = layout })
+end
+
+-- Re-applied on every parse, because a rule set at runtime is gone the next
+-- time Hyprland reads its config -- which Omarchy does on every theme change.
+-- Without this the layout you picked reverts to dwindle at the moment you
+-- change your theme, which is nowhere near the moment you would blame for it.
+--
+-- Rules are declarative and match a workspace when it is created, so naming
+-- one that does not exist yet is not a problem to work around; it is the point.
+for name, layout in pairs(read_layouts()) do apply_layout(name, layout) end
+
+-- Move a workspace to another screen, give it another slot name, or both, and
+-- then put it on the id that new name calls for. The bar widget drives this
+-- when it takes a guest in and when it sends one home; only this file knows
+-- the ids and the layout file.
+--
+-- Renamed by id rather than by its old name: the id is what every listener
+-- agrees on, and a move has just changed which screen the name belongs to.
+-- Except a workspace created by name: its id is negative, and "-1337" is a
+-- relative selector to Hyprland, not an id. Those go by name.
+local function relocate(from, to, monitor)
+  local workspace = find_workspace(function(candidate) return candidate.name == from end)
+  if not workspace then return end
+
+  if monitor then
+    hl.dispatch(hl.dsp.workspace.move({ workspace = "name:" .. from, monitor = monitor }))
+  end
+
+  if to ~= from then
+    local selector = workspace.id > 0 and tostring(workspace.id) or ("name:" .. from)
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = selector, name = to }))
+
+    -- The layout preference is filed under the workspace's name, so a rename
+    -- would quietly lose it. Carry it, and apply it, so the workspace looks
+    -- the same on the far side of the move.
+    local layouts = read_layouts()
+    if layouts[from] then
+      layouts[to], layouts[from] = layouts[from], nil
+      write_layouts(layouts)
+      apply_layout(to, layouts[to])
+    end
+  end
+
+  rehome({ workspace.id })
+end
+
 -- Rules already registered this parse. A parse starts from an empty rule set,
 -- and this file is re-read with it.
 local named_ids = {}
@@ -293,11 +364,17 @@ local named_ids = {}
 -- -- "name:" on a missing workspace makes a named one with a negative id, the
 -- thing this is here to avoid. A slot squatting on the id is moved to its own
 -- first. Names with no id to give them fall back to the name anyway: past
--- ID_STRIDE slots, or an id held by something that is not a slot.
+-- names.STRIDE slots, or an id held by something that is not a slot.
 local function workspace_selector(name)
-  local by_name = "name:" .. name
-  if find_workspace(function(workspace) return workspace.name == name end) then return by_name end
+  local key, slot = names.split(name)
+  local existing = key and find_workspace(function(workspace)
+    return names.matches(workspace.name, key, slot)
+  end)
+  -- The real name, which for a guest carries its trailer: "name:" has to name
+  -- the workspace Hyprland actually has, not the slot we asked for.
+  if existing then return "name:" .. existing.name end
 
+  local by_name = "name:" .. name
   local id = slot_id(name, true)
   if not id then return by_name end
 
@@ -314,7 +391,7 @@ end
 local function slot_selector(slot)
   local monitor = hl.get_active_monitor()
   if not monitor then return nil end
-  return workspace_selector(slot_name(monitor_key(monitor), slot))
+  return workspace_selector(names.slot(monitor_key(monitor), slot))
 end
 
 local function focus_slot(slot)
@@ -351,12 +428,20 @@ local function monitor_ring()
   local monitor = hl.get_active_monitor()
   if not monitor then return {}, nil end
 
+  -- This screen's configured slots, plus any live one past them -- a guest.
+  -- Not every slot up to `count`: that is the most any screen needs, and
+  -- another screen's guests would put empty slots in this ring the bar here
+  -- does not show.
   local key = monitor_key(monitor)
   local ring, own = {}, {}
   for slot = 1, actions.count do
-    local name = slot_name(key, slot)
-    ring[slot] = name
-    own[name] = true
+    local live = find_workspace(function(workspace)
+      return names.matches(workspace.name, key, slot)
+    end)
+    if live or slot <= actions.slots then
+      ring[#ring + 1] = live and live.name or names.slot(key, slot)
+      own[ring[#ring]] = true
+    end
   end
 
   local parked = {}
@@ -485,12 +570,19 @@ local function swap_workspaces(selector)
     -- That leaves each workspace on the screen the other one is named for, so
     -- trade the names back. Both names are still taken at that point, hence the
     -- third one in the middle.
+    --
+    -- A swap is a deliberate move, and a deliberate move ends guest status on
+    -- both sides -- the receiving screen's slot is not where either workspace
+    -- came from. Address each by the name Hyprland still has for it, trailer
+    -- and all, but hand over the bare slot names, so neither comes out of the
+    -- trade still claiming an origin it no longer has.
     local here, there = from.name, to.name
+    local here_base, there_base = names.strip(here), names.strip(there)
     local here_id, there_id = from.id, to.id
     hl.dispatch(hl.dsp.workspace.swap_monitors({ monitor1 = origin.name, monitor2 = monitor.name }))
     hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. here, name = SWAP_SCRATCH }))
-    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. there, name = here }))
-    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. SWAP_SCRATCH, name = there }))
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. there, name = here_base }))
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. SWAP_SCRATCH, name = there_base }))
 
     -- Ids go with names, or each screen's slots stop rising in order and the
     -- slide direction goes wrong on both. Two slots trade; a workspace with no
@@ -520,37 +612,6 @@ end
 -- here sets one -- the rule in `workspace_selector` carries only a name -- but
 -- running Omarchy's toggle by hand on a slot does, and ours will look dead on
 -- that workspace for the rest of the session.
-
-local layouts_path = state_path("layouts")
-
-local function read_layouts()
-  return read_state(layouts_path)
-end
-
-local function write_layouts(layouts)
-  write_state(layouts_path,
-    "-- Written by the Per-monitor Workspaces SUPER+L binding.\n"
-      .. "-- Workspace name to tiling layout, re-applied on every config parse.\n",
-    layouts)
-end
-
--- Ours are addressed by name, Omarchy's numbered ones by their number, and
--- `tonumber` is the whole difference: a workspace called "3" is Hyprland's
--- global third, ours is "<screen>:3". Standing on a parked workspace or a
--- global one the toggle still has to work, so it handles both.
-local function apply_layout(name, layout)
-  local selector = tonumber(name) and name or ("name:" .. name)
-  hl.workspace_rule({ workspace = selector, layout = layout })
-end
-
--- Re-applied on every parse, because a rule set at runtime is gone the next
--- time Hyprland reads its config -- which Omarchy does on every theme change.
--- Without this the layout you picked reverts to dwindle at the moment you
--- change your theme, which is nowhere near the moment you would blame for it.
---
--- Rules are declarative and match a workspace when it is created, so naming
--- one that does not exist yet is not a problem to work around; it is the point.
-for name, layout in pairs(read_layouts()) do apply_layout(name, layout) end
 
 local function toggle_layout()
   return function()
@@ -588,6 +649,7 @@ actions.cycle = cycle
 -- The selector for a workspace name, for the bar widget: it creates missing
 -- slots, and only this file knows the id to create them with.
 actions.selector = workspace_selector
+actions.relocate = relocate
 
 -- Across screens. `selector` is a Hyprland monitor selector -- "l", "r", "u",
 -- "d" for a direction, or "+1"/"-1" to step.
@@ -605,7 +667,7 @@ actions.toggle_layout = toggle_layout
 -- Hyprland when it finds this lower than it expects. Raise it whenever the
 -- widget starts relying on something new in this file. Versions from before
 -- this field existed read as 1.
-actions.version = 2
+actions.version = 3
 
 -- Also global, so hypr/bindings.lua can find it without a path, and so a
 -- user's own config can reach it after hypr/init.lua has run.
