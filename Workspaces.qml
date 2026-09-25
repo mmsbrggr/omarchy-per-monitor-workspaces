@@ -721,9 +721,18 @@ BarWidget {
     return name === undefined ? "" : name
   }
 
+  // A guest whose trailer names this screen's block counts too: it is one of
+  // this screen's own on its way home, still under the name of the screen that
+  // hosted it. Hyprland hands a returning screen back the workspace it was
+  // showing, and reclaimGuests renames it in the same settle, but adopt()
+  // reads the snapshot from before that rename; not counting it sent the
+  // screen away from exactly the workspace it came back to.
   function showsOwnSlot() {
     var name = root.activeHere()
     if (name === "") return false
+
+    var origin = root.guestOrigin(name)
+    if (origin && root.myBlock !== 0 && origin.block === root.myBlock) return true
 
     for (var slot = 1; slot <= root.effectiveCount; slot++) {
       if (root.matchesSlot(name, slot)) return true
@@ -732,22 +741,41 @@ BarWidget {
   }
 
   // Every slot of this screen's that is living on another monitor. Hyprland
-  // parks them on a survivor when the screen goes and hands none of them back
-  // when it returns, so a screen can come home to find several of its own
-  // workspaces scattered -- not just the one it happens to land on. Returns
+  // parks them on a survivor when the screen goes, and hands them back only
+  // when it returns on the same connector, so a screen can come home to find
+  // several of its own workspaces scattered -- not just the one it happens to
+  // land on. Returns
   // each workspace's real name, trailer and all, rather than the synthesized
   // bare slot name: the screen holding it may since have absorbed it as a
   // guest, and a move targeting the bare name would then name nothing and
   // silently do nothing, orphaning the workspace.
+  //
+  // Except a guest whose own screen is connected again. It is on its way
+  // there, and Hyprland often gets it there first -- it hands a returning
+  // screen back the workspaces it took, whenever the connector is the same.
+  // Its screen's reclaimGuests renames it into place; pulling it back here
+  // would only bounce it between the two.
   function strandedSlots() {
     var here = String(root.monitor ? root.monitor.name : "")
     var names = []
     for (var slot = 1; slot <= root.effectiveCount; slot++) {
       var workspace = root.workspaceByName(root.slotName(slot))
-      if (workspace !== null && workspace.monitor !== "" && workspace.monitor !== here)
-        names.push(workspace.name)
+      if (workspace === null || workspace.monitor === "" || workspace.monitor === here) continue
+
+      var origin = root.guestOrigin(workspace.name)
+      if (origin && root.blockConnected(origin.block)) continue
+      names.push(workspace.name)
     }
     return names
+  }
+
+  // Whether the screen holding this id block is connected.
+  function blockConnected(block) {
+    var monitors = Hyprland.monitors.values
+    for (var i = 0; i < monitors.length; i++) {
+      if (root.blocks[root.keyForMonitor(monitors[i].name)] === block) return true
+    }
+    return false
   }
 
   // The slot to put it on: the first that already exists, so a workspace parked
