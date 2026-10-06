@@ -587,10 +587,20 @@ local function swap_workspaces(selector)
     local here, there = from.name, to.name
     local here_base, there_base = names.strip(here), names.strip(there)
     local here_id, there_id = from.id, to.id
+
+    -- "Never" is a hope, not a check: an interrupted swap leaves a workspace
+    -- behind under the scratch name, and borrowing it again would give two
+    -- workspaces the same name for the last rename to pick between. Lengthen
+    -- it until nothing has it.
+    local scratch = SWAP_SCRATCH
+    while find_workspace(function(workspace) return workspace.name == scratch end) do
+      scratch = scratch .. "_"
+    end
+
     hl.dispatch(hl.dsp.workspace.swap_monitors({ monitor1 = origin.name, monitor2 = monitor.name }))
-    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. here, name = SWAP_SCRATCH }))
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. here, name = scratch }))
     hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. there, name = here_base }))
-    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. SWAP_SCRATCH, name = there_base }))
+    hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. scratch, name = there_base }))
 
     -- Ids go with names, or each screen's slots stop rising in order and the
     -- slide direction goes wrong on both. Two slots trade; a workspace with no
