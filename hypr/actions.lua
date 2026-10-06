@@ -97,41 +97,72 @@ function actions.set_count(value, slots)
 end
 
 -- State the Hyprland half keeps for itself, under ~/.local/state/omarchy as
--- Lua tables like the count above. dofile, not require, for the same reason.
+-- Lua tables like the count above. Loaded fresh, not require'd, for the same
+-- reason.
 
 local function state_path(suffix)
   local home = os.getenv("HOME")
   return home and (home .. "/.local/state/omarchy/mmsbrggr.per-monitor-workspaces." .. suffix .. ".lua")
 end
 
+-- A missing file is an empty table: nothing saved yet. A file that is there
+-- but will not load is nil, and callers must not write over it -- an empty
+-- table here would let the next block allocation hand out block 1 again and
+-- rewrite the file with only that key, losing every other screen's mapping.
+--
+-- Loaded with an empty environment, so the file can only ever return data:
+-- everything we write is a table of string keys to strings and numbers.
 local function read_state(path)
   if not path then return {} end
 
-  local ok, saved = pcall(dofile, path)
-  return (ok and type(saved) == "table") and saved or {}
+  local probe, _, code = io.open(path, "r")
+  if not probe then return code == 2 and {} or nil end -- 2 is ENOENT
+  probe:close()
+
+  local chunk = loadfile(path, "t", {})
+  if not chunk then return nil end
+
+  local ok, saved = pcall(chunk)
+  return (ok and type(saved) == "table") and saved or nil
 end
 
 -- Sorted, so a file rewritten after a one-key change reads as a one-line diff
 -- rather than a reshuffle -- pairs() order is not stable between runs.
+--
+-- Written beside the file and renamed over it, so a crash or a full disk
+-- mid-write leaves the old file whole, and the bar's FileView never sees half
+-- of one. Every write and the close are checked: a short write only shows up
+-- there. Returns whether the file was replaced.
 local function write_state(path, header, entries)
-  if not path then return end
+  if not path then return false end
 
   local keys = {}
   for key in pairs(entries) do keys[#keys + 1] = key end
   table.sort(keys)
 
-  local file = io.open(path, "w")
-  if not file then return end
-
-  file:write(header)
-  file:write("return {\n")
+  local lines = { header, "return {\n" }
   for _, key in ipairs(keys) do
     local value = entries[key]
-    file:write(string.format("  [%q] = %s,\n", key,
-      type(value) == "number" and tostring(value) or string.format("%q", value)))
+    lines[#lines + 1] = string.format("  [%q] = %s,\n", key,
+      type(value) == "number" and tostring(value) or string.format("%q", value))
   end
-  file:write("}\n")
-  file:close()
+  lines[#lines + 1] = "}\n"
+
+  local temp = path .. ".tmp"
+  local file = io.open(temp, "w")
+  if not file then return false end
+
+  local written = true
+  for _, line in ipairs(lines) do
+    if not file:write(line) then written = false break end
+  end
+  if not file:close() then written = false end
+
+  if not (written and os.rename(temp, path)) then
+    os.remove(temp)
+    return false
+  end
+  return true
 end
 
 -- Description, not connector name: DP-2/DP-3 can swap on replug, which would
@@ -182,6 +213,12 @@ local names = dofile(here .. "names.lua")
 local blocks_path = state_path("blocks")
 local blocks = read_state(blocks_path)
 
+-- A blocks file that will not load still holds every screen's block, as far
+-- as we know, so leave it alone: no new blocks this session, and screens fall
+-- back to named workspaces until it loads again on the next parse.
+local blocks_writable = blocks ~= nil
+blocks = blocks or {}
+
 -- The id a slot name should have. `allocate` gives an unseen screen its block;
 -- without it, a key that has none yet has no id either.
 local function slot_id(name, allocate)
@@ -191,7 +228,7 @@ local function slot_id(name, allocate)
 
   local block = tonumber(blocks[key])
   if not block then
-    if not allocate then return nil end
+    if not (allocate and blocks_writable) then return nil end
 
     block = 0
     for _, used in pairs(blocks) do block = math.max(block, tonumber(used) or 0) end
@@ -316,7 +353,7 @@ end
 --
 -- Rules are declarative and match a workspace when it is created, so naming
 -- one that does not exist yet is not a problem to work around; it is the point.
-for name, layout in pairs(read_layouts()) do apply_layout(name, layout) end
+for name, layout in pairs(read_layouts() or {}) do apply_layout(name, layout) end
 
 -- Move a workspace to another screen, give it another slot name, or both, and
 -- then put it on the id that new name calls for. The bar widget drives this
@@ -342,8 +379,10 @@ local function relocate(from, to, monitor)
     -- The layout preference is filed under the workspace's name, so a rename
     -- would quietly lose it. Carry it, and apply it, so the workspace looks
     -- the same on the far side of the move.
+    -- nil when the file will not load: carrying one entry would rewrite it
+    -- with only that one.
     local layouts = read_layouts()
-    if layouts[from] then
+    if layouts and layouts[from] then
       layouts[to], layouts[from] = layouts[from], nil
       write_layouts(layouts)
       apply_layout(to, layouts[to])
@@ -633,9 +672,13 @@ local function toggle_layout()
     local layout = workspace.tiled_layout == "dwindle" and "scrolling" or "dwindle"
     apply_layout(workspace.name, layout)
 
+    -- An unreadable file is left for you to look at; the layout still holds
+    -- until the next parse.
     local layouts = read_layouts()
-    layouts[workspace.name] = layout
-    write_layouts(layouts)
+    if layouts then
+      layouts[workspace.name] = layout
+      write_layouts(layouts)
+    end
 
     -- Omarchy's toggle says so too, with this icon. Silence would read as the
     -- same nothing-happened the broken key gave you.
