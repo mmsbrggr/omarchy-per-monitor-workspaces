@@ -28,9 +28,15 @@ BarWidget {
   // A persistent path rather than a runtime one: Hyprland parses its config
   // before the shell starts, so a runtime file would not exist yet at login and
   // the session would open with the wrong number of keys bound.
+  //
+  // Capped at 99, names.MAX_SLOT in hypr/names.lua: a slot at or past the
+  // stride has no workspace id, and Memory.parseSlot rejects it, so it would
+  // show as a dot the keys and the memory treat as an ordinary named
+  // workspace. hypr/actions.lua clamps the same way; keep them in step.
+  readonly property int maxSlotCount: 99
   readonly property int slotCount: {
     var count = Number(root.setting("count", 5))
-    return count > 0 ? Math.max(1, Math.floor(count)) : 5
+    return count > 0 ? Math.min(root.maxSlotCount, Math.max(1, Math.floor(count))) : 5
   }
 
   readonly property string home: Quickshell.env("HOME") || ""

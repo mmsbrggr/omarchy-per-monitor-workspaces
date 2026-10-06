@@ -22,6 +22,12 @@ local names = {}
 
 names.STRIDE = 100
 
+-- The highest slot a screen can have, and so the most slots a screen can be
+-- given: slot STRIDE would run into the next block's ids. The count is clamped
+-- to this in actions.lua and in Workspaces.qml, and parseSlot in memory.js
+-- rejects anything past it; all of them have to agree.
+names.MAX_SLOT = names.STRIDE - 1
+
 function names.slot(key, slot)
   return key .. ":" .. slot
 end

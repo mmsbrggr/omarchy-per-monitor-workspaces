@@ -55,5 +55,7 @@ check("matches plain", names.matches("BOE:3", "BOE", 3), true)
 check("id", names.id(2, 5), 205)
 check("id low", names.id(2, 0), nil)
 check("id high", names.id(2, 100), nil)
+check("max slot", names.MAX_SLOT, 99)
+check("id max slot", names.id(2, names.MAX_SLOT), 299)
 
 if failures == 0 then print("all names tests passed") else os.exit(1) end

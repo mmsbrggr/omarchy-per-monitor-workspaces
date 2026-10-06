@@ -26,6 +26,8 @@
         "key": "count",
         "type": "number",
         "label": "Workspaces per monitor",
+        "min": 1,
+        "max": 99,
         "description": "Slots each screen gets. The shortcuts in hypr/init.lua read this, so both stay in step.",
         "defaultValue": 5
       }

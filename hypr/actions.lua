@@ -49,9 +49,19 @@ local function configured_count()
   return tonumber(config.count), tonumber(config.slots)
 end
 
+-- The naming scheme lives in names.lua -- dofile, not require, for the same
+-- reason as the state files above: a plain Lua interpreter loads it too, for
+-- tests/names_test.lua.
+local here = debug.getinfo(1, "S").source:match("@(.*/)") or ""
+local names = dofile(here .. "names.lua")
+
+-- Clamped to 1..names.MAX_SLOT: a slot at or past the stride has no id and
+-- would fall back to a named workspace the fix-up and the widget ignore. The
+-- widget's slotCount in Workspaces.qml clamps the same way; keep them in step.
 local function whole_count(value)
   local number = tonumber(value)
-  return number and math.max(1, math.floor(number)) or nil
+  if not number or number ~= number then return nil end
+  return math.min(names.MAX_SLOT, math.max(1, math.floor(number)))
 end
 
 -- The public surface, declared here because the count sits on it and can change
@@ -158,12 +168,6 @@ local function monitor_key(monitor)
 
   return description
 end
-
--- The naming scheme lives in names.lua -- dofile, not require, for the same
--- reason as the state files above: a plain Lua interpreter loads it too, for
--- tests/names_test.lua.
-local here = debug.getinfo(1, "S").source:match("@(.*/)") or ""
-local names = dofile(here .. "names.lua")
 
 -- Slots are numbered workspaces that carry a name, not named workspaces.
 --
