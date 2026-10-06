@@ -468,6 +468,10 @@ BarWidget {
     'pcall(dofile, os.getenv("HOME") .. "/.config/omarchy/plugins/' + root.moduleName + '/hypr/init.lua")'
 
   property string bindingsText: ""
+  // Kept apart from the text, because an empty file, a missing one and one not
+  // read yet all have the same "" for text and call for different answers:
+  // "loading" | "loaded" | "missing" | "unreadable".
+  property string bindingsState: "loading"
   property string installError: ""
 
   // Read the file and look for the line, rather than asking the Lua half to
@@ -477,7 +481,9 @@ BarWidget {
   // stays on disk looking perfectly current.
   //
   // Matched on the plugin directory rather than the whole line, so a
-  // hand-placed variant with different quoting still counts.
+  // hand-placed variant with different quoting still counts. hypr/actions.lua
+  // counts too: loading it alone and binding your own keys is the documented
+  // way to opt out of these shortcuts, and that should not be asked about.
   readonly property bool bindingsLinePresent: {
     if (root.bindingsText === "") return false
 
@@ -486,6 +492,7 @@ BarWidget {
       var line = lines[i].replace(/^\s+/, "")
       if (line.indexOf("--") === 0) continue
       if (line.indexOf(root.moduleName + "/hypr/init.lua") !== -1) return true
+      if (line.indexOf(root.moduleName + "/hypr/actions.lua") !== -1) return true
     }
     return false
   }
@@ -532,8 +539,14 @@ BarWidget {
     watchChanges: true
     atomicWrites: true
     printErrors: false
-    onLoaded: root.bindingsText = text()
-    onLoadFailed: root.bindingsText = ""
+    onLoaded: {
+      root.bindingsText = text()
+      root.bindingsState = "loaded"
+    }
+    onLoadFailed: error => {
+      root.bindingsText = ""
+      root.bindingsState = error === FileViewError.FileNotFound ? "missing" : "unreadable"
+    }
     onFileChanged: reload()
   }
 
@@ -553,19 +566,22 @@ BarWidget {
     root.installError = ""
 
     if (root.bindingsPath === "") { root.installError = "Cannot resolve $HOME."; return }
-    if (root.bindingsText === "") {
+    if (root.bindingsState === "loading" || root.bindingsState === "unreadable") {
       // Either it has not been read yet, or it genuinely cannot be. Ask for a
       // reload and say so, rather than sending someone off to edit by hand.
+      // Writing now would replace contents we have not seen.
       bindingsFile.reload()
       root.installError = "Still reading " + root.bindingsPath + " — try again."
       return
     }
     if (root.bindingsLinePresent) { root.installError = "The line is already there."; return }
 
-    bindingsBackup.setText(root.bindingsText)
+    // A missing file has nothing to keep, so it gets no backup and is created
+    // by the write below. An empty one is backed up like any other.
+    if (root.bindingsState === "loaded") bindingsBackup.setText(root.bindingsText)
 
     var body = root.bindingsText
-    if (body.charAt(body.length - 1) !== "\n") body += "\n"
+    if (body !== "" && body.charAt(body.length - 1) !== "\n") body += "\n"
     bindingsFile.setText(body
       + "\n-- Per-monitor workspaces: SUPER+N acts on the focused monitor.\n"
       + "-- Added by the Per-monitor Workspaces bar widget. pcall so that removing\n"
