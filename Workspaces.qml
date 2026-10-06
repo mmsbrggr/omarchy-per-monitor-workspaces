@@ -454,7 +454,25 @@ BarWidget {
     return items
   }
 
-  readonly property var entries: root.buildEntries()
+  // Every snapshot rebuilds the list, and almost every snapshot -- a focus
+  // change, a window opening -- rebuilds it identical. Handing the Repeater a
+  // new array each time leaves it to decide whether to tear down and recreate
+  // every button, losing hover and tooltip state on the one under the cursor.
+  // So the previous array is kept while its contents are the same, and the
+  // model only changes when a slot or a parked workspace actually does. The
+  // memo is an object rather than two properties so that updating it from
+  // inside the binding notifies nothing.
+  readonly property var entriesMemo: ({ key: "", items: [] })
+
+  function stableEntries(items) {
+    var key = JSON.stringify(items)
+    if (key === root.entriesMemo.key) return root.entriesMemo.items
+    root.entriesMemo.key = key
+    root.entriesMemo.items = items
+    return items
+  }
+
+  readonly property var entries: root.stableEntries(root.buildEntries())
 
   // ------------------------------------------------------------- bindings
   //
