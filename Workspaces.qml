@@ -266,21 +266,50 @@ BarWidget {
   // is and what it shows, and every workspace. See the memory section.
   property var snapshot: ({ monitors: [], workspaces: [] })
 
+  // A read asked for while the last one is still out. Starting a process that
+  // is already running does nothing, so without this the request is simply
+  // lost -- most likely under hotplug, when hyprctl is slower than the defer
+  // below -- and everything keeps the older snapshot until some unrelated
+  // event happens to ask again. It is honoured once that read has exited.
+  property bool truthPending: false
+  // A read that came back unreadable is tried once more, not forever: if
+  // hyprctl keeps answering garbage, the next real event will ask again.
+  property bool truthRetried: false
+
+  function truthFailed() {
+    if (root.truthRetried) return
+    root.truthRetried = true
+    truthDefer.restart()
+  }
+
   Process {
     id: truth
     command: ["sh", "-c", "hyprctl -j monitors; printf '\\036'; hyprctl -j workspaces"]
+    // Through the timer rather than straight back to `running`: it leaves the
+    // process time to settle, and a read that is somehow still out just marks
+    // itself pending again.
+    onExited: {
+      if (!root.truthPending) return
+      root.truthPending = false
+      truthDefer.restart()
+    }
     stdout: StdioCollector {
       onStreamFinished: {
         var parts = String(this.text).split("\u001e")
-        if (parts.length < 2) return
+        if (parts.length < 2) {
+          root.truthFailed()
+          return
+        }
 
         var monitors, list
         try {
           monitors = JSON.parse(parts[0])
           list = JSON.parse(parts[1])
         } catch (error) {
+          root.truthFailed()
           return
         }
+        root.truthRetried = false
 
         var active = ({})
         var focused = ""
@@ -325,7 +354,10 @@ BarWidget {
   Timer {
     id: truthDefer
     interval: 40
-    onTriggered: truth.running = true
+    onTriggered: {
+      if (truth.running) root.truthPending = true
+      else truth.running = true
+    }
   }
 
   // Everything that can change which workspaces exist, what they are called,
