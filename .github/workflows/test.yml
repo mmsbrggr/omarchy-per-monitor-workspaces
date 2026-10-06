@@ -1,0 +1,27 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - run: for f in hypr/*.lua tests/*.lua; do luac -p "$f"; done
+      - run: python3 -m py_compile tools/check-workspaces.py
+      - run: lua tests/names_test.lua
+      - run: lua tests/swap_sets_test.lua
+      - run: lua tests/integrations_test.lua
+  qml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qttest \
+            qml6-module-qtqml-workerscript qml6-module-qtqml-models qml6-module-qtquick-window
+      - run: /usr/lib/qt6/bin/qmltestrunner -input tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software

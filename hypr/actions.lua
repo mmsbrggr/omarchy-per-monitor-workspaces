@@ -164,6 +164,7 @@ end
 -- tests/names_test.lua.
 local here = debug.getinfo(1, "S").source:match("@(.*/)") or ""
 local names = dofile(here .. "names.lua")
+local integrations
 
 -- Slots are numbered workspaces that carry a name, not named workspaces.
 --
@@ -351,6 +352,7 @@ local function relocate(from, to, monitor)
   end
 
   rehome({ workspace.id })
+  if integrations and from ~= to then integrations.notify_remap({ [from] = to }) end
 end
 
 -- Rules already registered this parse. A parse starts from an empty rule set,
@@ -600,6 +602,109 @@ local function swap_workspaces(selector)
 
     -- Follow the windows you just sent over.
     hl.dispatch(hl.dsp.focus({ monitor = monitor.name }))
+    if integrations then integrations.notify_remap({ [here] = there_base, [there] = here_base }) end
+  end
+end
+
+-- Exchange every existing slot, not just the workspaces currently visible.
+-- Move whole workspaces so their layout trees, groups and window state travel
+-- together. Stage all names first: the destination slot may still be occupied.
+local function swap_workspace_sets(selector)
+  return function()
+    local monitor, origin = target_monitor(selector)
+    if not monitor then return end
+    local here_key, there_key = monitor_key(origin), monitor_key(monitor)
+    local function destination(name)
+      local key, slot = names.split(name)
+      if key == here_key then return names.slot(there_key, slot), monitor.name end
+      if key == there_key then return names.slot(here_key, slot), origin.name end
+    end
+
+    local moving, destinations, ids = {}, {}, {}
+    -- A layouts file that exists but cannot be read is left alone.
+    local readable = read_layouts()
+    local saved, layouts = readable or {}, {}
+    for name, layout in pairs(saved) do layouts[name] = layout end
+    local origin_active = origin.active_workspace and origin.active_workspace.name
+    local target_active = monitor.active_workspace and monitor.active_workspace.name
+    local active_window = hl.get_active_window()
+    for _, workspace in ipairs(hl.get_workspaces()) do
+      local name, target
+      if not workspace.special then name, target = destination(workspace.name) end
+      if name then
+        -- Duplicate slots can occur while hotplug recovery is settling. Wait
+        -- for that recovery rather than overwriting either workspace's name.
+        if destinations[name] then return end
+        destinations[name] = true
+        moving[#moving + 1] = {
+          from = workspace.name, to = name, monitor = target, id = workspace.id,
+          layout = workspace.tiled_layout,
+        }
+        ids[#ids + 1] = workspace.id
+      end
+    end
+    if #moving == 0 then return end
+    table.sort(moving, function(a, b) return a.from < b.from end)
+
+    local prefix = SWAP_SCRATCH .. "-set-"
+    while find_workspace(function(w) return w.name:sub(1, #prefix) == prefix end) do
+      prefix = prefix .. "_"
+    end
+    for index, workspace in ipairs(moving) do
+      workspace.scratch = prefix .. index
+      hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. workspace.from, name = workspace.scratch }))
+    end
+    for _, workspace in ipairs(moving) do
+      hl.dispatch(hl.dsp.workspace.move({ workspace = "name:" .. workspace.scratch, monitor = workspace.monitor }))
+      hl.dispatch(hl.dsp.workspace.rename({ workspace = "name:" .. workspace.scratch, name = workspace.to }))
+    end
+    -- A screen that has only ever shown global workspaces has no id block yet.
+    -- Without one, rehome leaves its new slots on the other screen's ids.
+    slot_id(names.slot(here_key, 1), true)
+    slot_id(names.slot(there_key, 1), true)
+    rehome(ids)
+
+    -- Saved preferences travel with their slots, used or not. Only explicit
+    -- choices are saved: pinning every default would make these slots ignore a
+    -- later change to general:layout. Guest status ends on an intentional
+    -- swap, matching swap_workspaces; their host slot is retained.
+    local cleared = {}
+    for name in pairs(saved) do
+      if destination(name) then layouts[name], cleared[name] = nil, true end
+    end
+    for name, layout in pairs(saved) do
+      local target = destination(name)
+      if target then layouts[target], cleared[target] = layout, nil end
+    end
+    if readable then write_layouts(layouts) end
+    for name, layout in pairs(layouts) do if destination(name) then apply_layout(name, layout) end end
+    -- Rules cannot be removed at runtime, and the API cannot read
+    -- general:layout. Fall back to dwindle, the default toggle_layout assumes,
+    -- until the next config parse drops the stale rule.
+    for name in pairs(cleared) do apply_layout(name, "dwindle") end
+
+    -- Show the exchanged active workspace on each screen. Follow the set from
+    -- the originating screen, leaving unrelated global/special workspaces alone.
+    local target_at_origin = target_active and destination(target_active)
+    local origin_at_target = origin_active and destination(origin_active)
+    if target_at_origin then
+      hl.dispatch(hl.dsp.focus({ workspace = "name:" .. target_at_origin }))
+    end
+    if origin_at_target then
+      hl.dispatch(hl.dsp.focus({ workspace = "name:" .. origin_at_target }))
+      if active_window and active_window.workspace and destination(active_window.workspace.name) then
+        hl.dispatch(hl.dsp.focus({ window = "address:" .. active_window.address }))
+      end
+    else
+      hl.dispatch(hl.dsp.focus({ monitor = origin.name }))
+    end
+    local mapping = {}
+    for slot = 1, math.min(actions.count, names.STRIDE - 1) do
+      mapping[names.slot(here_key, slot)] = names.slot(there_key, slot)
+      mapping[names.slot(there_key, slot)] = names.slot(here_key, slot)
+    end
+    for _, workspace in ipairs(moving) do mapping[workspace.from] = workspace.to end
+    if integrations then integrations.notify_remap(mapping) end
   end
 end
 
@@ -665,6 +770,7 @@ actions.focus_monitor = focus_monitor
 actions.send_window = send_window
 actions.send_workspace = send_workspace
 actions.swap_workspaces = swap_workspaces
+actions.swap_workspace_sets = swap_workspace_sets
 
 -- The workspace under you, whichever screen it is on.
 actions.toggle_layout = toggle_layout
@@ -676,6 +782,8 @@ actions.toggle_layout = toggle_layout
 -- widget starts relying on something new in this file. Versions from before
 -- this field existed read as 1.
 actions.version = 3
+integrations = dofile(here .. "integrations.lua")(workspace_selector)
+actions.integration = integrations
 
 -- Also global, so hypr/bindings.lua can find it without a path, and so a
 -- user's own config can reach it after hypr/init.lua has run.
