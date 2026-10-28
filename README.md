@@ -1,5 +1,10 @@
 # Per-monitor Workspaces for Omarchy
 
+> **Omarchy 4.5 has this built in.** From 4.5 on (in release candidate as of
+> October 2026) every monitor gets its own workspaces out of the box. This plugin
+> is for **Omarchy 4.0.x only** and is frozen at 1.3.x. Take it out before you
+> upgrade — see [Omarchy 4.5](#omarchy-45).
+
 Give every screen its own set of workspaces. `SUPER+3` always means *this
 screen's third workspace* — never "jump to whichever monitor happens to own
 workspace 3".
@@ -47,7 +52,8 @@ every screen, so a switch slides the way you pressed it. The blocks are kept in
 
 ## Requirements
 
-- Omarchy 4 (Quattro), using the built-in bar
+- Omarchy 4.0.x (Quattro), using the built-in bar. Not 4.5 — see
+  [Omarchy 4.5](#omarchy-45)
 - Hyprland with the Lua config
 
 ## Install
@@ -252,6 +258,43 @@ omarchy plugin remove mmsbrggr.per-monitor-workspaces
 
 Omarchy's built-in workspace widget goes back where this one was. Then remove the
 `pcall(dofile, ...)` line from `~/.config/hypr/bindings.lua`.
+
+## Omarchy 4.5
+
+Omarchy 4.5 ships per-monitor workspaces natively
+([omacom/omarchy#15655](https://github.com/omacom/omarchy/pull/15655)), in the
+same shape as this plugin: a block of ten numbered workspaces per physical
+monitor, remembered in `~/.local/state/omarchy/monitor-workspaces`, folded into a
+surviving screen on unplug and sent home on replug. `SUPER + 1..0`,
+`SUPER + TAB`, `SUPER + CTRL + TAB` and the scroll wheel all stay on the focused
+monitor, and `SUPER + SHIFT + ALT + ←↑↓→` moves a workspace to the screen on
+that side. Its reconciler runs on every reload and monitor change and renumbers
+anything it does not recognise, so the two cannot share a session.
+
+**Before upgrading to 4.5**, take the plugin out:
+
+```sh
+omarchy plugin remove mmsbrggr.per-monitor-workspaces
+```
+
+and delete the `pcall(dofile, …per-monitor-workspaces…)` line from
+`~/.config/hypr/bindings.lua`. Open workspaces keep their windows; 4.5 sorts
+them into the right blocks on its first pass.
+
+What this plugin had that 4.5 does not has been proposed upstream:
+
+| Here | Upstream |
+| --- | --- |
+| A workspace keeps its `SUPER + L` layout when it changes number | [omacom/omarchy#16928](https://github.com/omacom/omarchy/pull/16928) |
+| `SUPER + CTRL + ALT + ←↑↓→` focuses the screen in that direction | [omacom/omarchy#16930](https://github.com/omacom/omarchy/pull/16930) |
+| `SUPER + CTRL + ALT + SHIFT + ←↑↓→` swaps workspaces with that screen | [omacom/omarchy#16932](https://github.com/omacom/omarchy/pull/16932) |
+| `count` sets how many workspaces each bar shows | [omacom/omarchy#16933](https://github.com/omacom/omarchy/pull/16933) |
+
+Not carried over: right-click on a dot to send the window there, and the removal
+of `SUPER + 6..0` — 4.5 keeps all ten keys on every screen.
+
+This repository stays as it is for 4.0 users and will be archived once 4.5 is
+final.
 
 ## License
 
