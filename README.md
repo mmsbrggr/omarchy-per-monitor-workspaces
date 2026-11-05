@@ -1,9 +1,9 @@
 # Per-monitor Workspaces for Omarchy
 
-> **Omarchy 4.5 has this built in.** From 4.5 on (in release candidate as of
-> October 2026) every monitor gets its own workspaces out of the box. This plugin
-> is for **Omarchy 4.0.x only** and is frozen at 1.3.x. Take it out before you
-> upgrade — see [Omarchy 4.5](#omarchy-45).
+> **Omarchy 4.5 has this built in.** From 4.5 on, every monitor gets its own
+> workspaces out of the box. This plugin is for **Omarchy 4.0.x only** and is
+> frozen at 1.3.x. Take it out before you upgrade — see
+> [Omarchy 4.5](#omarchy-45).
 
 Give every screen its own set of workspaces. `SUPER+3` always means *this
 screen's third workspace* — never "jump to whichever monitor happens to own
@@ -288,13 +288,12 @@ What this plugin had that 4.5 does not has been proposed upstream:
 | A workspace keeps its `SUPER + L` layout when it changes number | [omacom/omarchy#16928](https://github.com/omacom/omarchy/pull/16928) |
 | `SUPER + CTRL + ALT + ←↑↓→` focuses the screen in that direction | [omacom/omarchy#16930](https://github.com/omacom/omarchy/pull/16930) |
 | `SUPER + CTRL + ALT + SHIFT + ←↑↓→` swaps workspaces with that screen | [omacom/omarchy#16932](https://github.com/omacom/omarchy/pull/16932) |
-| `count` sets how many workspaces each bar shows | [omacom/omarchy#16933](https://github.com/omacom/omarchy/pull/16933) |
+| `count` sets how many workspaces each bar shows | [omacom/omarchy#15705](https://github.com/omacom/omarchy/pull/15705), whose `persistent` setting covers it |
 
 Not carried over: right-click on a dot to send the window there, and the removal
 of `SUPER + 6..0` — 4.5 keeps all ten keys on every screen.
 
-This repository stays as it is for 4.0 users and will be archived once 4.5 is
-final.
+This repository is archived. It stays available, read-only, for 4.0 users.
 
 ## License
 
